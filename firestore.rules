@@ -1,0 +1,95 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Profile, voice/daily-sentence preferences and every learning subcollection
+    // are private to the matching Firebase Authentication account.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /{collectionName}/{documentId} {
+        allow read, write: if isOwner(userId) && collectionName != 'apiUsage';
+      }
+
+      // API quota documents may only ever increase. This prevents a client from
+      // resetting its own count to bypass the server-side OpenAI limit.
+      match /apiUsage/{usageId} {
+        function hasDailyShape(data) {
+          return data.keys().hasAll(['kind', 'date', 'userId', 'total', 'vocabulary', 'conversation', 'feedback'])
+            && data.keys().hasOnly(['kind', 'date', 'userId', 'total', 'vocabulary', 'conversation', 'feedback']);
+        }
+
+        function hasMinuteShape(data) {
+          return data.keys().hasAll(['kind', 'minute', 'userId', 'count'])
+            && data.keys().hasOnly(['kind', 'minute', 'userId', 'count']);
+        }
+
+        function validDailyCreate() {
+          let data = request.resource.data;
+          return hasDailyShape(data)
+            && data.kind == 'daily'
+            && data.userId == userId
+            && data.total == 1
+            && data.vocabulary is int && data.conversation is int && data.feedback is int
+            && data.vocabulary >= 0 && data.conversation >= 0 && data.feedback >= 0
+            && data.vocabulary + data.conversation + data.feedback == 1;
+        }
+
+        function validDailyIncrease() {
+          let before = resource.data;
+          let after = request.resource.data;
+          return hasDailyShape(after)
+            && after.kind == 'daily'
+            && after.userId == userId
+            && after.date == before.date
+            && after.total == before.total + 1 && after.total <= 120
+            && after.vocabulary >= before.vocabulary && after.vocabulary <= before.vocabulary + 1 && after.vocabulary <= 10
+            && after.conversation >= before.conversation && after.conversation <= before.conversation + 1 && after.conversation <= 100
+            && after.feedback >= before.feedback && after.feedback <= before.feedback + 1 && after.feedback <= 10
+            && after.vocabulary + after.conversation + after.feedback == after.total;
+        }
+
+        function validMinuteCreate() {
+          let data = request.resource.data;
+          return hasMinuteShape(data)
+            && data.kind == 'minute'
+            && data.userId == userId
+            && data.count == 1;
+        }
+
+        function validMinuteIncrease() {
+          let before = resource.data;
+          let after = request.resource.data;
+          return hasMinuteShape(after)
+            && after.kind == 'minute'
+            && after.userId == userId
+            && after.minute == before.minute
+            && after.count == before.count + 1 && after.count <= 6;
+        }
+
+        // Deletion is intentionally denied: otherwise a user could erase the
+        // current counter and immediately start a fresh daily quota.
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && (validDailyCreate() || validMinuteCreate());
+        allow update: if isOwner(userId) && (validDailyIncrease() || validMinuteIncrease());
+      }
+    }
+
+    // Users may submit feedback and remove their own submission when they delete
+    // their account. The feedback query in account.ts includes userId == uid.
+    match /feedback/{feedbackId} {
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+      allow read, delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+  }
+}

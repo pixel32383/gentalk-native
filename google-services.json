@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "513534244833",
+    "project_id": "gentalk-595d2",
+    "storage_bucket": "gentalk-595d2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:513534244833:android:4a5402bf7c89b6412884a0",
+        "android_client_info": {
+          "package_name": "com.gentalk.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "513534244833-g614okme6c88jb073ivnban4mr1e1uq4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.gentalk.app",
+            "certificate_hash": "3523e06c6356d2b63b4590eeb3a55306b4a36f34"
+          }
+        },
+        {
+          "client_id": "513534244833-132rku5ihqh1qlrjdkcj8mmlqbqgci2t.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEK91DNVLFq_KZ-AkcHWXDq48G2dRgcpw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "513534244833-132rku5ihqh1qlrjdkcj8mmlqbqgci2t.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,137 @@
+import type { Scenario } from '@/types/learning';
+
+export const SCENARIOS: Scenario[] = [
+  {
+    id: 'en-cafe',
+    langCode: 'en',
+    situation: '카페에서 커피 주문',
+    title: 'Ordering coffee at a cafe',
+    difficulty: '기초',
+    emoji: '☕',
+    context: '바리스타에게 원하는 음료와 매장 이용 여부를 말하는 상황입니다.',
+    keywords: ['카페', '커피', 'cafe', 'coffee', 'order', 'latte'],
+    vocabulary: [
+      { word: 'latte', translation: '라테', pos: '명사' },
+      { word: 'to go', translation: '포장해서', pos: '표현' },
+      { word: 'for here', translation: '매장에서', pos: '표현' },
+      { word: 'receipt', translation: '영수증', pos: '명사' },
+    ],
+    phrases: [
+      { phrase: "I'd like a latte, please.", translation: '라테 하나 주세요.' },
+      { phrase: 'Can I get that to go?', translation: '포장해 주실 수 있나요?' },
+      { phrase: 'How much is it?', translation: '얼마인가요?' },
+    ],
+    dialogue: [
+      {
+        speaker: 'A',
+        role: '손님',
+        text: 'Hi! Can I get a medium latte, please?',
+        translation: '안녕하세요. 미디엄 라테 하나 주세요.',
+      },
+      {
+        speaker: 'B',
+        role: '바리스타',
+        text: 'Sure. For here or to go?',
+        translation: '물론이죠. 매장에서 드시나요, 포장인가요?',
+      },
+      {
+        speaker: 'A',
+        role: '손님',
+        text: 'For here, please.',
+        translation: '매장에서 마실게요.',
+      },
+    ],
+    culturalNote: '미국 카페에서는 보통 Small, Medium, Large 같은 사이즈로 주문합니다.',
+  },
+  {
+    id: 'en-hotel',
+    langCode: 'en',
+    situation: '호텔 체크인',
+    title: 'Hotel check-in',
+    difficulty: '중급',
+    emoji: '🏨',
+    context: '프런트 데스크에서 예약자 이름과 체크아웃 시간을 확인하는 상황입니다.',
+    keywords: ['호텔', '체크인', 'hotel', 'reservation', 'check-in'],
+    vocabulary: [
+      { word: 'reservation', translation: '예약', pos: '명사' },
+      { word: 'front desk', translation: '프런트 데스크', pos: '명사' },
+      { word: 'room key', translation: '객실 키', pos: '명사' },
+      { word: 'check-out', translation: '체크아웃', pos: '명사' },
+      { word: 'breakfast', translation: '조식', pos: '명사' },
+    ],
+    phrases: [
+      { phrase: 'I have a reservation under my name.', translation: '제 이름으로 예약했습니다.' },
+      { phrase: 'What time is check-out?', translation: '체크아웃 시간이 언제인가요?' },
+      { phrase: 'Is breakfast included?', translation: '조식이 포함되어 있나요?' },
+    ],
+    dialogue: [
+      {
+        speaker: 'A',
+        role: '투숙객',
+        text: 'Hi, I have a reservation.',
+        translation: '안녕하세요. 예약했습니다.',
+      },
+      {
+        speaker: 'B',
+        role: '직원',
+        text: 'Welcome. May I have your name?',
+        translation: '환영합니다. 성함을 알려주시겠어요?',
+      },
+      {
+        speaker: 'A',
+        role: '투숙객',
+        text: "It's under Mina Kim.",
+        translation: '미나 김 이름으로 되어 있습니다.',
+      },
+      {
+        speaker: 'B',
+        role: '직원',
+        text: "Here's your room key. Enjoy your stay.",
+        translation: '객실 키 여기 있습니다. 편안한 시간 보내세요.',
+      },
+    ],
+    culturalNote: '호텔 체크인 시 신분증과 결제 카드가 필요할 수 있습니다.',
+  },
+  {
+    id: 'en-restaurant',
+    langCode: 'en',
+    situation: '레스토랑 예약 확인',
+    title: 'Checking a restaurant reservation',
+    difficulty: '중급',
+    emoji: '🍽️',
+    context: '입구에서 예약 이름을 말하고 좌석을 안내받는 상황입니다.',
+    keywords: ['레스토랑', '예약', 'restaurant', 'reservation', 'table'],
+    vocabulary: [
+      { word: 'table for two', translation: '두 명 자리', pos: '표현' },
+      { word: 'reservation', translation: '예약', pos: '명사' },
+      { word: 'menu', translation: '메뉴', pos: '명사' },
+      { word: 'recommend', translation: '추천하다', pos: '동사' },
+    ],
+    phrases: [
+      { phrase: 'We have a reservation at seven.', translation: '7시에 예약했습니다.' },
+      { phrase: 'Could we sit by the window?', translation: '창가에 앉을 수 있을까요?' },
+      { phrase: 'What do you recommend?', translation: '무엇을 추천하시나요?' },
+    ],
+    dialogue: [
+      {
+        speaker: 'A',
+        role: '손님',
+        text: 'Hi, we have a reservation at seven.',
+        translation: '안녕하세요. 7시에 예약했습니다.',
+      },
+      {
+        speaker: 'B',
+        role: '직원',
+        text: 'Great. What name is it under?',
+        translation: '좋습니다. 어떤 이름으로 예약하셨나요?',
+      },
+      {
+        speaker: 'A',
+        role: '손님',
+        text: "It's under Park.",
+        translation: '박 이름으로 되어 있어요.',
+      },
+    ],
+    culturalNote: '인기 있는 레스토랑은 예약 시간을 지나면 테이블이 취소될 수 있습니다.',
+  },
+];
