@@ -1,8 +1,9 @@
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import { AppText } from '@/components/gentalk/AppText';
 import { COLORS } from '@/data/constants';
 import { RoundButton } from '@/components/gentalk/RoundButton';
+import { LEGAL_URLS } from '@/data/legal';
 
 export type LegalNoticeKind = 'terms' | 'privacy';
 
@@ -27,6 +28,7 @@ export function LegalNoticeModal({ visible, kind, onClose }: { visible: boolean;
   const isPrivacy = kind === 'privacy';
   const sections = isPrivacy ? PRIVACY : TERMS;
   const title = isPrivacy ? '개인정보처리방침' : '서비스 이용약관';
+  const publicUrl = isPrivacy ? LEGAL_URLS.privacy : LEGAL_URLS.terms;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -47,7 +49,10 @@ export function LegalNoticeModal({ visible, kind, onClose }: { visible: boolean;
               ))}
             </View>
           </ScrollView>
-          <Pressable onPress={onClose} className="mt-2 items-center rounded-xl bg-[#255F5A] py-3 active:opacity-80"><AppText className="font-black text-white">확인</AppText></Pressable>
+          <View className="mt-2 flex-row gap-3">
+            <Pressable onPress={() => void Linking.openURL(publicUrl)} className="flex-1 items-center rounded-xl border border-[#255F5A] bg-white py-3 active:opacity-80"><AppText className="font-black text-[#255F5A]">웹에서 보기</AppText></Pressable>
+            <Pressable onPress={onClose} className="flex-1 items-center rounded-xl bg-[#255F5A] py-3 active:opacity-80"><AppText className="font-black text-white">확인</AppText></Pressable>
+          </View>
         </View>
       </View>
     </Modal>
