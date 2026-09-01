@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, BackHandler, Modal, Pressable, ScrollView, View } from 'react-native';
+import { Alert, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, View } from 'react-native';
 import { Check, ChevronRight, X } from 'lucide-react-native';
 import { COLORS } from '@/data/constants';
 import { LANGUAGES } from '@/data/languages';
@@ -102,6 +102,8 @@ export function LearningFlowScreen({
   const progressRef = useRef<LearningProgress | null>(null);
   const autoSaveRef = useRef(onAutoSave);
   const hasStartedAutoSave = useRef(false);
+  const learningScrollRef = useRef<ScrollView>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   autoSaveRef.current = onAutoSave;
   const words = scenario.vocabulary;
   const pairWords = words.filter((item) => selectedWords.includes(item.word));
@@ -112,9 +114,38 @@ export function LearningFlowScreen({
     (matchingPage + 1) * matchingPageSize,
   );
 
+  const revealLatestConversation = () => {
+    // Wait for the keyboard resize before showing the latest Staff message above it.
+    setTimeout(() => learningScrollRef.current?.scrollToEnd({ animated: true }), 180);
+  };
+
   useEffect(() => {
     progressRef.current = buildProgress();
   });
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      if (stage !== 2) return;
+      if (process.env.EXPO_OS === 'android') {
+        setKeyboardInset(event.endCoordinates.height);
+      }
+      requestAnimationFrame(() => learningScrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardInset(0);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [stage]);
+
+  useEffect(() => {
+    if (stage !== 2) return;
+    // Move with the user's message, Staff's typing indicator, and the completed reply.
+    const timer = setTimeout(() => learningScrollRef.current?.scrollToEnd({ animated: true }), 80);
+    return () => clearTimeout(timer);
+  }, [isSendingMessage, messages.length, stage]);
 
   useEffect(() => {
     if (wordGameOnly) return;
@@ -307,6 +338,9 @@ export function LearningFlowScreen({
 
   return (
     <>
+    <KeyboardAvoidingView
+      className="flex-1"
+      behavior={process.env.EXPO_OS === 'ios' ? 'padding' : undefined}>
     <View className="flex-1">
       <View className="shrink-0 flex-row items-center gap-3 border-b border-[#E9DDCE] px-4 py-4">
         <RoundButton onPress={() => wordGameOnly ? onBack() : setShowExitPrompt(true)}>
@@ -319,7 +353,12 @@ export function LearningFlowScreen({
         <AppText className="font-mono text-xs font-bold text-[#914523]">{stage + 1}/5</AppText>
       </View>
       <View className="mx-4 h-1.5 rounded-full bg-[#E5D7BF]"><View className="h-1.5 rounded-full bg-[#914523]" style={{ width: `${((stage + 1) / 5) * 100}%` }} /></View>
-      <ScrollView className="flex-1" contentContainerStyle={{ padding: 20, gap: 14 }}>
+      <ScrollView
+        ref={learningScrollRef}
+        className="flex-1"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        contentContainerStyle={{ padding: 20, paddingBottom: 32 + keyboardInset, gap: 14 }}>
         <View className="flex-row items-start justify-between gap-3">
           <View className="flex-1">
             <AppText className="text-xl font-black text-[#231A0E]">{title}</AppText>
@@ -377,6 +416,7 @@ export function LearningFlowScreen({
             isSending={isSendingMessage}
             learningLanguage={scenario.langCode}
             onChangeMessage={setMessage}
+            onFocusMessageInput={revealLatestConversation}
             onSend={() => void sendMessage()}
             hasConversationError={hasConversationError}
             onRetryConversation={() => void sendMessage()}
@@ -437,6 +477,7 @@ export function LearningFlowScreen({
         </Pressable>
       </View>
     </View>
+    </KeyboardAvoidingView>
     <Modal visible={showExitPrompt} transparent animationType="fade" onRequestClose={() => setShowExitPrompt(false)}>
       <View className="flex-1 items-center justify-center bg-black/40 px-6">
         <View className="w-full rounded-2xl bg-white p-5">

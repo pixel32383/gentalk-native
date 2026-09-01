@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, deleteDoc, doc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { deleteProfileImage } from './profile-images';
+import { clearPendingSyncForUser } from '@/services/pending-sync';
 
 const USER_SUBCOLLECTIONS = ['learningRecords', 'inProgressLearning', 'dailySentences'] as const;
 
@@ -33,14 +34,17 @@ export async function deleteUserData(userId: string): Promise<void> {
     ...USER_SUBCOLLECTIONS.map((name) => deleteCollectionDocuments(['users', userId, name])),
     deleteFeedbackDocuments(userId),
     deleteProfileImage(userId),
+    clearPendingSyncForUser(userId),
   ]);
   await deleteDoc(doc(db, 'users', userId));
 
   await AsyncStorage.multiRemove([
     `@gentalk/learning-records/${userId}`,
+    `@gentalk/in-progress-learning/${userId}`,
     `@gentalk/daily-sentences/${userId}`,
     `@gentalk/daily-sentence-settings/${userId}`,
     `@gentalk/voice-settings/${userId}`,
     `@gentalk/voice-mode/${userId}`,
+    `@gentalk/user-profile/${userId}`,
   ]);
 }

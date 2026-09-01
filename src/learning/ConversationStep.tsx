@@ -46,6 +46,7 @@ type ConversationStepProps = {
   isSending: boolean;
   learningLanguage: string;
   onChangeMessage: (value: string) => void;
+  onFocusMessageInput: () => void;
   onSend: () => void;
   hasConversationError: boolean;
   onRetryConversation: () => void;
@@ -98,6 +99,7 @@ export function ConversationStep({
   isSending,
   learningLanguage,
   onChangeMessage,
+  onFocusMessageInput,
   onSend,
   hasConversationError,
   onRetryConversation,
@@ -259,6 +261,7 @@ export function ConversationStep({
             numberOfLines={2}
             textAlignVertical="top"
             onChangeText={onChangeMessage}
+            onFocus={onFocusMessageInput}
             placeholder={translateText('메시지를 입력하세요...')}
             placeholderTextColor="#A58E76"
             className="min-h-[68px] flex-1 rounded-xl border border-[#D9B37D] bg-white px-3 py-3 text-base text-[#231A0E]"

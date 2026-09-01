@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Alert,
+  AppState,
   BackHandler,
   Linking,
   Modal,
@@ -27,6 +28,7 @@ import { generateVocabulary } from '@/services/learning-api';
 import { cancelDailySentenceNotifications, requestNotificationPermissionOnFirstLogin, scheduleDailySentenceNotifications } from '@/services/notifications';
 import { loadDailySentenceSettings, saveDailySentenceSettings } from '@/services/daily-sentence-settings';
 import { loadVoiceSettings, saveSpeechRate, saveSpeechVoiceMode, type SpeechVoiceMode } from '@/services/voice-settings';
+import { flushPendingSync } from '@/services/pending-sync';
 import { getSpeechPermissionGranted, requestSpeechPermissionOnFirstLogin } from '@/services/speech-permissions';
 import { deleteLearningRecord, getLearningUserId, loadLearningRecords, saveLearningRecord } from '@/firebase/learning-records';
 import { deleteInProgressLearning, loadInProgressLearning, saveInProgressLearning } from '@/firebase/in-progress-learning';
@@ -133,15 +135,57 @@ export default function GentalkApp() {
   const [lastLearningRequest, setLastLearningRequest] = useState<{ situation: string; template?: Scenario } | null>(null);
   const generationControllerRef = useRef<AbortController | null>(null);
   const progressWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingSyncFlushRef = useRef<Promise<number> | null>(null);
   const shouldOpenDailySentencesRef = useRef(false);
   const displayLanguage: DisplayLanguage = DISPLAY_LANGUAGE_CODES.includes(userLang as DisplayLanguage)
     ? (userLang as DisplayLanguage)
     : 'ko';
 
+  function flushQueuedChanges(userId: string) {
+    if (pendingSyncFlushRef.current) return pendingSyncFlushRef.current;
+
+    const task = flushPendingSync(userId)
+      .catch((error) => {
+        console.warn('저장 대기 중인 데이터를 동기화하지 못했습니다.', error);
+        return 0;
+      })
+      .finally(() => {
+        pendingSyncFlushRef.current = null;
+      });
+    pendingSyncFlushRef.current = task;
+    return task;
+  }
+
+  function showQueuedSyncError(message: string, operation: () => Promise<void>) {
+    const retry = () => {
+      void operation().catch(() => showQueuedSyncError(message, operation));
+    };
+    setSyncError({ message, retry });
+  }
+
   useEffect(() => {
     void AsyncStorage.getItem('@gentalk/onboarding-completed')
       .then((value) => setOnboardingStatus(value === 'true' ? 'done' : 'required'))
       .catch(() => setOnboardingStatus('required'));
+  }, []);
+
+  useEffect(() => {
+    const retryQueuedChanges = () => {
+      const user = auth.currentUser;
+      if (user) void flushQueuedChanges(user.uid);
+    };
+
+    // No extra native module is required: queued data is retried when the app returns
+    // to the foreground and periodically while it remains open.
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') retryQueuedChanges();
+    });
+    const interval = setInterval(retryQueuedChanges, 30_000);
+
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -202,6 +246,8 @@ export default function GentalkApp() {
           }
           return;
         }
+
+        await flushQueuedChanges(user.uid);
 
         const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([loadLearningRecords(user.uid), loadInProgressLearning(user.uid), loadUserProfile(user.uid), loadDailySentences(user.uid), loadDailySentenceSettings(user.uid), loadVoiceSettings(user.uid), Notifications.getPermissionsAsync(), getSpeechPermissionGranted()]);
         if (active) {
@@ -278,7 +324,16 @@ export default function GentalkApp() {
         const userId = await getLearningUserId();
         await saveInProgressLearning(userId, savedProgress);
       })
-      .catch((error) => console.warn('진행 중인 학습을 저장하지 못했습니다.', error));
+      .catch((error) => {
+        console.warn('진행 중인 학습을 저장하지 못했습니다.', error);
+        showQueuedSyncError(
+          '진행 중인 학습을 서버에 저장하지 못했습니다. 기기에 임시 저장되어 있으며, 네트워크 연결 후 다시 저장할 수 있습니다.',
+          async () => {
+            const userId = await getLearningUserId();
+            await saveInProgressLearning(userId, savedProgress);
+          },
+        );
+      });
   }
 
   function saveProgressAndExit(progress: LearningProgress) {
@@ -296,6 +351,13 @@ export default function GentalkApp() {
         await deleteInProgressLearning(userId, progressId);
       } catch (error) {
         console.warn('진행 중인 학습을 삭제하지 못했습니다.', error);
+        showQueuedSyncError(
+          '진행 중인 학습 삭제를 서버에 반영하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 시도됩니다.',
+          async () => {
+            const userId = await getLearningUserId();
+            await deleteInProgressLearning(userId, progressId);
+          },
+        );
       }
     }
     setActiveProgress(null);
@@ -318,6 +380,13 @@ export default function GentalkApp() {
       await deleteInProgressLearning(userId, progressId);
     } catch (error) {
       console.warn('진행 중인 학습을 삭제하지 못했습니다.', error);
+      showQueuedSyncError(
+        '진행 중인 학습 삭제를 서버에 반영하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 시도됩니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          await deleteInProgressLearning(userId, progressId);
+        },
+      );
     }
   }
 
@@ -336,7 +405,9 @@ export default function GentalkApp() {
     setRecentScenarios([]);
     try {
       const userId = await getLearningUserId();
-      await Promise.all(recordIds.map((recordId) => deleteLearningRecord(userId, recordId)));
+      for (const recordId of recordIds) {
+        await deleteLearningRecord(userId, recordId);
+      }
     } catch (error) {
       console.warn('학습 기록 전체를 삭제하지 못했습니다.', error);
     }
@@ -349,9 +420,20 @@ export default function GentalkApp() {
     await removeAllLearningRecords();
     try {
       const userId = await getLearningUserId();
-      await Promise.all(progressIds.map((progressId) => deleteInProgressLearning(userId, progressId)));
+      for (const progressId of progressIds) {
+        await deleteInProgressLearning(userId, progressId);
+      }
     } catch (error) {
       console.warn('이어서 학습할 내용을 삭제하지 못했습니다.', error);
+      showQueuedSyncError(
+        '진행 중인 학습 전체 삭제를 서버에 반영하지 못했습니다. 네트워크 연결 후 다시 시도됩니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          for (const progressId of progressIds) {
+            await deleteInProgressLearning(userId, progressId);
+          }
+        },
+      );
     }
   }
 
@@ -362,10 +444,22 @@ export default function GentalkApp() {
     try {
       await cancelDailySentenceNotifications();
       const userId = await getLearningUserId();
-      await Promise.all(sentenceIds.map((sentenceId) => deleteDailySentence(userId, sentenceId)));
+      for (const sentenceId of sentenceIds) {
+        await deleteDailySentence(userId, sentenceId);
+      }
       await saveDailySentenceSettings(userId, { enabled: false, time: sentenceTime, count: sentenceCount });
     } catch (error) {
       console.warn('오늘의 문장 전체를 삭제하지 못했습니다.', error);
+      showQueuedSyncError(
+        '오늘의 문장 전체 삭제를 서버에 반영하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 시도됩니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          for (const sentenceId of sentenceIds) {
+            await deleteDailySentence(userId, sentenceId);
+          }
+          await saveDailySentenceSettings(userId, { enabled: false, time: sentenceTime, count: sentenceCount });
+        },
+      );
     }
   }
 
@@ -409,6 +503,8 @@ export default function GentalkApp() {
       const user = auth.currentUser;
       if (!user) throw new Error('로그인 정보를 확인하지 못했습니다.');
       setIsGuestMode(user.isAnonymous);
+
+      await flushQueuedChanges(user.uid);
 
       const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([
         loadLearningRecords(user.uid),
@@ -676,6 +772,13 @@ export default function GentalkApp() {
         await deleteDailySentence(userId, id);
       } catch (error) {
         console.warn('오늘의 문장을 삭제하지 못했습니다.', error);
+        showQueuedSyncError(
+          '오늘의 문장 삭제를 서버에 반영하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 시도됩니다.',
+          async () => {
+            const userId = await getLearningUserId();
+            await deleteDailySentence(userId, id);
+          },
+        );
       }
       return;
     }
@@ -688,6 +791,13 @@ export default function GentalkApp() {
       await saveDailySentence(userId, sentence);
     } catch (error) {
       console.warn('오늘의 문장을 저장하지 못했습니다.', error);
+      showQueuedSyncError(
+        '오늘의 문장을 서버에 저장하지 못했습니다. 기기에 임시 저장되어 있으며, 네트워크 연결 후 다시 저장할 수 있습니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          await saveDailySentence(userId, sentence);
+        },
+      );
     }
   }
 
@@ -701,6 +811,13 @@ export default function GentalkApp() {
       await deleteDailySentence(userId, sentenceId);
     } catch (error) {
       console.warn('오늘의 문장을 삭제하지 못했습니다.', error);
+      showQueuedSyncError(
+        '오늘의 문장 삭제를 서버에 반영하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 시도됩니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          await deleteDailySentence(userId, sentenceId);
+        },
+      );
     }
   }
 
