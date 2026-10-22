@@ -3,8 +3,9 @@ import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, s
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Scenario } from '@/types/learning';
 import { auth, db } from './firebase';
-import { clearPendingSyncOperation, getPendingDeletedIds, queuePendingSyncOperation } from '@/services/pending-sync';
+import { clearPendingSyncOperation, getPendingSyncOperations, queuePendingSyncOperation } from '@/services/pending-sync';
 import { waitForRemoteWrite } from '@/services/remote-write';
+import { mergeCachedRecords, type PendingRecordChange } from '@/services/merge-cached-records';
 
 const RECORDS_COLLECTION = 'learningRecords';
 
@@ -46,11 +47,15 @@ export async function loadLearningRecords(userId: string): Promise<Scenario[]> {
       orderBy('completedAt', 'desc'),
     );
     const snapshot = await getDocs(recordsQuery);
-    const pendingDeletedIds = await getPendingDeletedIds(userId, RECORDS_COLLECTION);
     const remote = snapshot.docs
       .map((item) => item.data().scenario as Scenario)
-      .filter((record) => record?.id && record?.situation && !pendingDeletedIds.has(record.id));
-    const merged = [...remote, ...cached.filter((record) => !remote.some((remoteRecord) => remoteRecord.id === record.id))]
+      .filter((record) => record?.id && record?.situation);
+    const pendingChanges = (await getPendingSyncOperations(userId)).flatMap((item): PendingRecordChange<Scenario>[] => {
+      if (item.type === 'save-learning-record') return [{ type: 'save', record: item.scenario }];
+      if (item.type === 'delete-learning-record') return [{ type: 'delete', id: item.recordId }];
+      return [];
+    });
+    const merged = mergeCachedRecords(remote, cached, pendingChanges)
       .sort((left, right) => (right.completedAt ?? '').localeCompare(left.completedAt ?? ''));
     await cacheLearningRecords(userId, merged);
     return merged;
@@ -67,14 +72,14 @@ export async function saveLearningRecord(userId: string, scenario: Scenario): Pr
   });
   const cached = await loadCachedLearningRecords(userId);
   await cacheLearningRecords(userId, [completedScenario, ...cached.filter((record) => record.id !== completedScenario.id)]);
-  await queuePendingSyncOperation({ userId, type: 'save-learning-record', scenario: completedScenario });
+  const operationId = await queuePendingSyncOperation({ userId, type: 'save-learning-record', scenario: completedScenario });
   try {
     await waitForRemoteWrite(setDoc(doc(db, 'users', userId, RECORDS_COLLECTION, completedScenario.id), {
       scenario: completedScenario,
       completedAt: completedScenario.completedAt,
       updatedAt: serverTimestamp(),
     }));
-    await clearPendingSyncOperation({ userId, type: 'save-learning-record', scenario: completedScenario });
+    await clearPendingSyncOperation(operationId);
   } catch (error) {
     throw error;
   }
@@ -83,10 +88,10 @@ export async function saveLearningRecord(userId: string, scenario: Scenario): Pr
 export async function deleteLearningRecord(userId: string, scenarioId: string): Promise<void> {
   const cached = await loadCachedLearningRecords(userId);
   await cacheLearningRecords(userId, cached.filter((record) => record.id !== scenarioId));
-  await queuePendingSyncOperation({ userId, type: 'delete-learning-record', recordId: scenarioId });
+  const operationId = await queuePendingSyncOperation({ userId, type: 'delete-learning-record', recordId: scenarioId });
   try {
     await waitForRemoteWrite(deleteDoc(doc(db, 'users', userId, RECORDS_COLLECTION, scenarioId)));
-    await clearPendingSyncOperation({ userId, type: 'delete-learning-record', recordId: scenarioId });
+    await clearPendingSyncOperation(operationId);
   } catch (error) {
     throw error;
   }

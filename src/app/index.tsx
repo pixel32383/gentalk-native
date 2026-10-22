@@ -26,9 +26,12 @@ import { DISPLAY_LANGUAGE_CODES } from '@/data/languages';
 import { setDisplayLanguage, translateText } from '@/data/translations';
 import { generateVocabulary } from '@/services/learning-api';
 import { cancelDailySentenceNotifications, requestNotificationPermissionOnFirstLogin, scheduleDailySentenceNotifications } from '@/services/notifications';
-import { loadDailySentenceSettings, saveDailySentenceSettings } from '@/services/daily-sentence-settings';
+import { loadDailySentenceSettings, saveDailySentenceSettings, type DailySentenceSettings } from '@/services/daily-sentence-settings';
+import { buildDailySentencePlans, getPlanSentences, getTodayPlanDate, loadDailySentencePlans, saveDailySentencePlans } from '@/services/daily-sentence-plan';
+import { setDailySentenceMonthCompleted } from '@/services/daily-sentence-status';
 import { loadVoiceSettings, saveSpeechRate, saveSpeechVoiceMode, type SpeechVoiceMode } from '@/services/voice-settings';
 import { flushPendingSync } from '@/services/pending-sync';
+import { loadDevelopmentAiRateLimitEnabled, setDevelopmentAiRateLimitEnabled } from '@/services/developer-settings';
 import { getSpeechPermissionGranted, requestSpeechPermissionOnFirstLogin } from '@/services/speech-permissions';
 import { deleteLearningRecord, getLearningUserId, loadLearningRecords, saveLearningRecord } from '@/firebase/learning-records';
 import { deleteInProgressLearning, loadInProgressLearning, saveInProgressLearning } from '@/firebase/in-progress-learning';
@@ -56,10 +59,12 @@ import { FeedbackModal } from '@/components/modals/FeedbackModal';
 import { PermissionSettingsModal } from '@/components/modals/PermissionSettingsModal';
 import { DataManagementModal } from '@/components/modals/DataManagementModal';
 import { AppInfoModal } from '@/components/modals/AppInfoModal';
+import { DeveloperModeModal } from '@/components/modals/DeveloperModeModal';
+import { GuestLearningDataModal } from '@/components/modals/GuestLearningDataModal';
 import { DailySentenceScreen } from '@/screens/DailySentenceScreen';
 import { LearningFlowScreen } from '@/learning/LearningFlowScreen';
 import type { DisplayLanguage } from '@/types/language';
-import type { DailySentence, LearningProgress, PhraseItem, Scenario, VocabItem } from '@/types/learning';
+import type { CulturalTip, DailySentence, DailySentencePlans, LearningProgress, PhraseItem, Scenario, VocabItem } from '@/types/learning';
 
 
 type Screen =
@@ -71,6 +76,21 @@ type Screen =
   | 'learning-flow'
   | 'onboarding'
   | 'welcome';
+
+type GuestLearningSnapshot = {
+  records: Scenario[];
+  progress: LearningProgress[];
+  dailySentences: DailySentence[];
+  dailySentencePlans: DailySentencePlans;
+  dailySentenceSettings: DailySentenceSettings;
+};
+
+type ExistingLearningData = Pick<GuestLearningSnapshot, 'records' | 'progress' | 'dailySentences'>;
+
+function hasLearningData(data: ExistingLearningData) {
+  return data.records.length > 0 || data.progress.length > 0 || data.dailySentences.length > 0;
+}
+
 
 
 
@@ -103,6 +123,7 @@ export default function GentalkApp() {
   const [recentScenarios, setRecentScenarios] = useState<Scenario[]>([]);
   const [inProgressLearning, setInProgressLearning] = useState<LearningProgress[]>([]);
   const [dailySentences, setDailySentences] = useState<DailySentence[]>([]);
+  const [dailySentencePlans, setDailySentencePlans] = useState<DailySentencePlans>({});
   const [activeProgress, setActiveProgress] = useState<LearningProgress | null>(null);
   const [showLangSettings, setShowLangSettings] = useState(false);
   const [showWordCount, setShowWordCount] = useState(false);
@@ -112,6 +133,9 @@ export default function GentalkApp() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showDataManagement, setShowDataManagement] = useState(false);
   const [showAppInfo, setShowAppInfo] = useState(false);
+  const [showDeveloperMode, setShowDeveloperMode] = useState(false);
+  const [developmentAiRateLimitEnabled, setDevelopmentAiRateLimitEnabledState] = useState(true);
+  const [showGuestLearningDataChoice, setShowGuestLearningDataChoice] = useState(false);
   const [showPermissionSettings, setShowPermissionSettings] = useState(false);
   const [legalNotice, setLegalNotice] = useState<LegalNoticeKind | null>(null);
   const [userLang, setUserLang] = useState('ko');
@@ -125,7 +149,6 @@ export default function GentalkApp() {
   const [notificationPermissionGranted, setNotificationPermissionGranted] = useState(false);
   const [microphonePermissionGranted, setMicrophonePermissionGranted] = useState(false);
   const [profileName, setProfileName] = useState('Gentalk Learner');
-  const [profilePhone, setProfilePhone] = useState('');
   const [profileEmail, setProfileEmail] = useState('learner@gmail.com');
   const [profileImageUri, setProfileImageUri] = useState<string | null>(null);
   const [isStartingLearning, setIsStartingLearning] = useState(false);
@@ -135,14 +158,16 @@ export default function GentalkApp() {
   const [lastLearningRequest, setLastLearningRequest] = useState<{ situation: string; template?: Scenario } | null>(null);
   const generationControllerRef = useRef<AbortController | null>(null);
   const progressWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingSyncFlushRef = useRef<Promise<number> | null>(null);
+  const pendingSyncFlushRef = useRef(new Map<string, Promise<number>>());
+  const guestDataHandlingResolverRef = useRef<((handling: 'merge' | 'replace') => void) | null>(null);
   const shouldOpenDailySentencesRef = useRef(false);
   const displayLanguage: DisplayLanguage = DISPLAY_LANGUAGE_CODES.includes(userLang as DisplayLanguage)
     ? (userLang as DisplayLanguage)
     : 'ko';
 
   function flushQueuedChanges(userId: string) {
-    if (pendingSyncFlushRef.current) return pendingSyncFlushRef.current;
+    const pending = pendingSyncFlushRef.current.get(userId);
+    if (pending) return pending;
 
     const task = flushPendingSync(userId)
       .catch((error) => {
@@ -150,9 +175,9 @@ export default function GentalkApp() {
         return 0;
       })
       .finally(() => {
-        pendingSyncFlushRef.current = null;
+        pendingSyncFlushRef.current.delete(userId);
       });
-    pendingSyncFlushRef.current = task;
+    pendingSyncFlushRef.current.set(userId, task);
     return task;
   }
 
@@ -163,10 +188,28 @@ export default function GentalkApp() {
     setSyncError({ message, retry });
   }
 
+  function chooseGuestDataHandling(): Promise<'merge' | 'replace'> {
+    return new Promise((resolve) => {
+      guestDataHandlingResolverRef.current = resolve;
+      setShowGuestLearningDataChoice(true);
+    });
+  }
+
+  function resolveGuestDataHandling(handling: 'merge' | 'replace') {
+    const resolve = guestDataHandlingResolverRef.current;
+    guestDataHandlingResolverRef.current = null;
+    setShowGuestLearningDataChoice(false);
+    resolve?.(handling);
+  }
+
   useEffect(() => {
     void AsyncStorage.getItem('@gentalk/onboarding-completed')
       .then((value) => setOnboardingStatus(value === 'true' ? 'done' : 'required'))
       .catch(() => setOnboardingStatus('required'));
+  }, []);
+
+  useEffect(() => {
+    void loadDevelopmentAiRateLimitEnabled().then(setDevelopmentAiRateLimitEnabledState);
   }, []);
 
   useEffect(() => {
@@ -249,12 +292,14 @@ export default function GentalkApp() {
 
         await flushQueuedChanges(user.uid);
 
-        const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([loadLearningRecords(user.uid), loadInProgressLearning(user.uid), loadUserProfile(user.uid), loadDailySentences(user.uid), loadDailySentenceSettings(user.uid), loadVoiceSettings(user.uid), Notifications.getPermissionsAsync(), getSpeechPermissionGranted()]);
+        const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedDailyPlans, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([loadLearningRecords(user.uid), loadInProgressLearning(user.uid), loadUserProfile(user.uid), loadDailySentences(user.uid), loadDailySentenceSettings(user.uid), loadDailySentencePlans(user.uid), loadVoiceSettings(user.uid), Notifications.getPermissionsAsync(), getSpeechPermissionGranted()]);
+        const nextDailyPlans = buildDailySentencePlans(savedDailySentences, dailySentenceSettings.count, savedDailyPlans);
         if (active) {
           setIsGuestMode(user.isAnonymous);
           setRecentScenarios(records);
           setInProgressLearning(progress);
           setDailySentences(savedDailySentences);
+          setDailySentencePlans(nextDailyPlans);
           setSentenceTime(dailySentenceSettings.time);
           setSentenceCount(dailySentenceSettings.count);
           setSentenceEnabled(dailySentenceSettings.enabled);
@@ -264,18 +309,17 @@ export default function GentalkApp() {
           setMicrophonePermissionGranted(microphoneGranted);
           if (!user.isAnonymous) {
             setProfileName(savedProfile?.name ?? user.displayName ?? 'Gentalk Learner');
-            setProfilePhone(savedProfile?.phone ?? '');
             setProfileEmail(user.email ?? savedProfile?.email ?? 'learner@gmail.com');
             setProfileImageUri(savedProfile?.imageUri ?? user.photoURL);
           }
           setStartupScreen(shouldOpenDailySentencesRef.current ? 'saved' : 'home');
           setHasResolvedStartupAuth(true);
 
+          void saveDailySentencePlans(user.uid, nextDailyPlans).catch((error) => console.warn('오늘의 문장 배정표를 저장하지 못했습니다.', error));
           if (dailySentenceSettings.enabled && savedDailySentences.length > 0) {
             void scheduleDailySentenceNotifications(
               dailySentenceSettings.time,
-              dailySentenceSettings.count,
-              savedDailySentences.map((sentence) => ({ text: sentence.phrase, translation: sentence.translation })),
+              notificationPlans(savedDailySentences, nextDailyPlans),
             ).then(async (scheduled) => {
               if (!active) return;
               setSentenceEnabled(scheduled);
@@ -440,6 +484,7 @@ export default function GentalkApp() {
   async function removeAllDailySentences() {
     const sentenceIds = dailySentences.map((sentence) => sentence.id);
     setDailySentences([]);
+    setDailySentencePlans({});
     setSentenceEnabled(false);
     try {
       await cancelDailySentenceNotifications();
@@ -447,6 +492,7 @@ export default function GentalkApp() {
       for (const sentenceId of sentenceIds) {
         await deleteDailySentence(userId, sentenceId);
       }
+      await saveDailySentencePlans(userId, {});
       await saveDailySentenceSettings(userId, { enabled: false, time: sentenceTime, count: sentenceCount });
     } catch (error) {
       console.warn('오늘의 문장 전체를 삭제하지 못했습니다.', error);
@@ -457,6 +503,7 @@ export default function GentalkApp() {
           for (const sentenceId of sentenceIds) {
             await deleteDailySentence(userId, sentenceId);
           }
+          await saveDailySentencePlans(userId, {});
           await saveDailySentenceSettings(userId, { enabled: false, time: sentenceTime, count: sentenceCount });
         },
       );
@@ -496,22 +543,115 @@ export default function GentalkApp() {
     }
   }
 
+  async function copyGuestLearningData(
+    userId: string,
+    guestData: GuestLearningSnapshot,
+    copyPreferences: boolean,
+    existingDataToPreserve?: ExistingLearningData,
+  ) {
+    const existingRecordIds = new Set(existingDataToPreserve?.records.map((record) => record.id));
+    const existingProgressIds = new Set(existingDataToPreserve?.progress.map((progress) => progress.id));
+    const existingSentenceIds = new Set(existingDataToPreserve?.dailySentences.map((sentence) => sentence.id));
+    const operations = [
+      ...guestData.records.filter((record) => !existingRecordIds.has(record.id)).map((record) => saveLearningRecord(userId, record)),
+      ...guestData.progress.filter((progress) => !existingProgressIds.has(progress.id)).map((progress) => saveInProgressLearning(userId, progress)),
+      ...guestData.dailySentences.filter((sentence) => !existingSentenceIds.has(sentence.id)).map((sentence) => saveDailySentence(userId, sentence)),
+      ...(copyPreferences ? [
+        saveDailySentencePlans(userId, guestData.dailySentencePlans),
+        saveDailySentenceSettings(userId, guestData.dailySentenceSettings),
+      ] : []),
+    ];
+
+    // Every save is first cached and queued locally. A temporary network failure must not
+    // block login or lose the guest's records while the server sync retries in the background.
+    const results = await Promise.allSettled(operations);
+    if (results.some((result) => result.status === 'rejected')) {
+      showQueuedSyncError(
+        '일부 게스트 학습 데이터가 서버에 아직 저장되지 않았습니다. 기기의 저장 대기 내용을 다시 전송할 수 있습니다.',
+        async () => { await flushQueuedChanges(userId); },
+      );
+    }
+  }
+
+  async function clearExistingLearningData(userId: string, existingData: ExistingLearningData) {
+    const results = await Promise.allSettled([
+      ...existingData.records.map((record) => deleteLearningRecord(userId, record.id)),
+      ...existingData.progress.map((progress) => deleteInProgressLearning(userId, progress.id)),
+      ...existingData.dailySentences.map((sentence) => deleteDailySentence(userId, sentence.id)),
+    ]);
+    if (results.some((result) => result.status === 'rejected')) {
+      showQueuedSyncError(
+        '기존 학습 데이터 삭제 중 일부가 서버에 아직 반영되지 않았습니다. 저장 대기 내용을 다시 전송할 수 있습니다.',
+        async () => { await flushQueuedChanges(userId); },
+      );
+    }
+  }
+
   async function continueWithGoogle() {
     try {
-      const profile = await signInWithGoogle();
-      if (!profile) return;
+      const anonymousUser = auth.currentUser?.isAnonymous ? auth.currentUser : null;
+      const guestData: GuestLearningSnapshot | null = anonymousUser
+        ? {
+            records: recentScenarios,
+            progress: inProgressLearning,
+            dailySentences,
+            dailySentencePlans,
+            dailySentenceSettings: {
+              enabled: sentenceEnabled,
+              time: sentenceTime,
+              count: sentenceCount,
+            },
+          }
+        : null;
+
+      // Sync while the anonymous account is still active. The in-memory snapshot above
+      // remains the fallback when the device is offline.
+      if (anonymousUser) await flushQueuedChanges(anonymousUser.uid);
+
+      const signInResult = await signInWithGoogle();
+      if (!signInResult) return;
+      const { profile, switchedFromAnonymousAccount } = signInResult;
       const user = auth.currentUser;
       if (!user) throw new Error('로그인 정보를 확인하지 못했습니다.');
       setIsGuestMode(user.isAnonymous);
 
+      if (switchedFromAnonymousAccount && guestData && hasLearningData(guestData)) {
+        const [existingRecords, existingProgress, existingDailySentences] = await Promise.all([
+          loadLearningRecords(user.uid),
+          loadInProgressLearning(user.uid),
+          loadDailySentences(user.uid),
+        ]);
+        const existingData = {
+          records: existingRecords,
+          progress: existingProgress,
+          dailySentences: existingDailySentences,
+        };
+
+        let copyPreferences = true;
+        let existingDataToPreserve: ExistingLearningData | undefined;
+        if (hasLearningData(existingData)) {
+          const handling = await chooseGuestDataHandling();
+          if (handling === 'replace') {
+            await clearExistingLearningData(user.uid, existingData);
+          } else {
+            // A merge adds the guest's records without overwriting this account's schedule.
+            copyPreferences = false;
+            existingDataToPreserve = existingData;
+          }
+        }
+
+        await copyGuestLearningData(user.uid, guestData, copyPreferences, existingDataToPreserve);
+      }
+
       await flushQueuedChanges(user.uid);
 
-      const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([
+      const [records, progress, savedProfile, savedDailySentences, dailySentenceSettings, savedDailyPlans, savedVoiceSettings, notificationPermissions, microphoneGranted] = await Promise.all([
         loadLearningRecords(user.uid),
         loadInProgressLearning(user.uid),
         loadUserProfile(user.uid),
         loadDailySentences(user.uid),
         loadDailySentenceSettings(user.uid),
+        loadDailySentencePlans(user.uid),
         loadVoiceSettings(user.uid),
         Notifications.getPermissionsAsync(),
         getSpeechPermissionGranted(),
@@ -519,7 +659,9 @@ export default function GentalkApp() {
 
       setRecentScenarios(records);
       setInProgressLearning(progress);
+      const nextDailyPlans = buildDailySentencePlans(savedDailySentences, dailySentenceSettings.count, savedDailyPlans);
       setDailySentences(savedDailySentences);
+      setDailySentencePlans(nextDailyPlans);
       setSentenceTime(dailySentenceSettings.time);
       setSentenceCount(dailySentenceSettings.count);
       setSentenceEnabled(dailySentenceSettings.enabled);
@@ -530,22 +672,20 @@ export default function GentalkApp() {
 
       if (savedProfile) {
         setProfileName(savedProfile.name);
-        setProfilePhone(savedProfile.phone);
         setProfileEmail(user.email ?? savedProfile.email);
         setProfileImageUri(savedProfile.imageUri ?? profile.imageUri);
       } else {
         setProfileName(profile.name);
-        setProfilePhone('');
         setProfileEmail(profile.email);
         setProfileImageUri(profile.imageUri);
-        await saveUserProfile(user.uid, { ...profile, phone: '' });
+        await saveUserProfile(user.uid, profile);
       }
       setScreen('home');
+      void saveDailySentencePlans(user.uid, nextDailyPlans).catch((error) => console.warn('오늘의 문장 배정표를 저장하지 못했습니다.', error));
       if (dailySentenceSettings.enabled && savedDailySentences.length > 0) {
         void scheduleDailySentenceNotifications(
           dailySentenceSettings.time,
-          dailySentenceSettings.count,
-          savedDailySentences.map((sentence) => ({ text: sentence.phrase, translation: sentence.translation })),
+          notificationPlans(savedDailySentences, nextDailyPlans),
         ).then((scheduled) => setSentenceEnabled(scheduled));
       }
       void requestFirstLoginPermissions();
@@ -565,6 +705,7 @@ export default function GentalkApp() {
     setRecentScenarios([]);
     setInProgressLearning([]);
     setDailySentences([]);
+    setDailySentencePlans({});
     setSavedIds([]);
     setSentenceTime('09:00');
     setSentenceCount(1);
@@ -574,7 +715,6 @@ export default function GentalkApp() {
     setNotificationPermissionGranted(false);
     setMicrophonePermissionGranted(false);
     setProfileName('Gentalk Learner');
-    setProfilePhone('');
     setProfileEmail('learner@gmail.com');
     setProfileImageUri(null);
     shouldOpenDailySentencesRef.current = false;
@@ -639,7 +779,6 @@ export default function GentalkApp() {
 
   async function updateUserProfile(profile: UserProfile) {
     setProfileName(profile.name);
-    setProfilePhone(profile.phone);
     setProfileEmail(profile.email);
     setProfileImageUri(profile.imageUri);
     try {
@@ -683,8 +822,13 @@ export default function GentalkApp() {
         ? 'Hi! What can I get for you today?'
         : knownScenario?.dialogue.find((line) => line.speaker === 'B')?.text
       : undefined;
-    const openLearningFlow = (vocabulary: VocabItem[], title = requestedSituation, openingStaffMessage?: string, openingTranslation?: string, openingExampleReply?: string, openingExamplePronunciation?: string, culturalTips?: string[]) => {
-      const culturalNote = culturalTips?.[Math.floor(Math.random() * culturalTips.length)] ?? hotel.culturalNote;
+    const openLearningFlow = (vocabulary: VocabItem[], title = requestedSituation, openingStaffMessage?: string, openingTranslation?: string, openingExampleReply?: string, openingExamplePronunciation?: string, culturalTips?: CulturalTip[]) => {
+      const tips = culturalTips?.length ? culturalTips : hotel.culturalNotes;
+      const culturalNoteIndex = tips?.length ? Math.floor(Math.random() * tips.length) : undefined;
+      const selectedTip = culturalNoteIndex === undefined ? undefined : tips?.[culturalNoteIndex];
+      const culturalNote = typeof selectedTip === 'string'
+        ? selectedTip
+        : selectedTip?.[displayLanguage] ?? hotel.culturalNote;
       setCurrentScenario({
         ...hotel,
         id: `custom-${Date.now()}`,
@@ -696,7 +840,8 @@ export default function GentalkApp() {
         openingExampleReply,
         openingExamplePronunciation,
         culturalNote,
-        culturalNotes: culturalTips,
+        culturalNotes: tips,
+        culturalNoteIndex,
         vocabulary,
       });
       setLearningStartStage(0);
@@ -744,20 +889,47 @@ export default function GentalkApp() {
     );
   }
 
-  function getDailyPracticeSentences() {
-    return dailySentences.map((sentence) => ({ text: sentence.phrase, translation: sentence.translation }));
+  function notificationPlans(sentences: DailySentence[], plans: DailySentencePlans) {
+    return Object.keys(plans).sort().map((date) => ({
+      date,
+      sentences: getPlanSentences(sentences, plans, date).map((sentence) => ({ text: sentence.phrase, translation: sentence.translation })),
+    }));
   }
 
-  async function refreshDailySentenceNotifications(sentences: DailySentence[]) {
-    if (!sentenceEnabled) return;
+  async function updateDailySentencePlans(
+    sentences: DailySentence[],
+    count = sentenceCount,
+    options?: { rebuildFuture?: boolean; enabled?: boolean; time?: string },
+  ) {
+    const today = getTodayPlanDate();
+    const planBase = options?.rebuildFuture
+      ? Object.fromEntries(Object.entries(dailySentencePlans).filter(([date]) => date <= today))
+      : dailySentencePlans;
+    const nextPlans = buildDailySentencePlans(sentences, count, planBase, today);
+    setDailySentencePlans(nextPlans);
     try {
-      const scheduled = await scheduleDailySentenceNotifications(sentenceTime, sentenceCount, sentences.map((sentence) => ({ text: sentence.phrase, translation: sentence.translation })));
-      setSentenceEnabled(scheduled);
       const userId = await getLearningUserId();
-      await saveDailySentenceSettings(userId, { enabled: scheduled, time: sentenceTime, count: sentenceCount });
+      await saveDailySentencePlans(userId, nextPlans);
+    } catch (error) {
+      console.warn('오늘의 문장 배정표를 저장하지 못했습니다.', error);
+    }
+
+    const enabled = options?.enabled ?? sentenceEnabled;
+    if (!enabled) return nextPlans;
+    try {
+      const scheduled = await scheduleDailySentenceNotifications(options?.time ?? sentenceTime, notificationPlans(sentences, nextPlans));
+      setSentenceEnabled(scheduled);
+      setNotificationPermissionGranted(scheduled);
+      const userId = await getLearningUserId();
+      await saveDailySentenceSettings(userId, { enabled: scheduled, time: options?.time ?? sentenceTime, count });
     } catch {
       setSentenceEnabled(false);
     }
+    return nextPlans;
+  }
+
+  async function refreshDailySentenceNotifications(sentences: DailySentence[]) {
+    return updateDailySentencePlans(sentences, sentenceCount, { rebuildFuture: true });
   }
 
   async function toggleDailySentence(scenario: Scenario, phrase: PhraseItem, index: number) {
@@ -821,6 +993,29 @@ export default function GentalkApp() {
     }
   }
 
+  async function setDailySentenceCompleted(sentenceId: string, month: string, completed: boolean) {
+    const existingSentence = dailySentences.find((sentence) => sentence.id === sentenceId);
+    if (!existingSentence) return;
+    const updatedSentence = setDailySentenceMonthCompleted(existingSentence, month, completed, getTodayPlanDate());
+    const nextSentences = dailySentences.map((sentence) =>
+      sentence.id === sentenceId ? updatedSentence : sentence,
+    );
+    setDailySentences(nextSentences);
+    try {
+      const userId = await getLearningUserId();
+      await saveDailySentence(userId, updatedSentence);
+    } catch (error) {
+      console.warn('오늘의 문장 학습 상태를 저장하지 못했습니다.', error);
+      showQueuedSyncError(
+        '학습 상태를 서버에 저장하지 못했습니다. 기기에는 반영되었으며, 네트워크 연결 후 다시 저장할 수 있습니다.',
+        async () => {
+          const userId = await getLearningUserId();
+          await saveDailySentence(userId, updatedSentence);
+        },
+      );
+    }
+  }
+
   async function updateSentenceNotifications(
     enabled: boolean,
     time = sentenceTime,
@@ -835,11 +1030,7 @@ export default function GentalkApp() {
         return;
       }
 
-      const scheduled = await scheduleDailySentenceNotifications(time, count, getDailyPracticeSentences());
-      setSentenceEnabled(scheduled);
-      setNotificationPermissionGranted(scheduled);
-      const userId = await getLearningUserId();
-      await saveDailySentenceSettings(userId, { enabled: scheduled, time, count });
+      await updateDailySentencePlans(dailySentences, count, { rebuildFuture: true, enabled: true, time });
     } catch {
       setSentenceEnabled(false);
       Alert.alert('알림 설정에 실패했습니다', '잠시 후 다시 시도해주세요.');
@@ -861,6 +1052,7 @@ export default function GentalkApp() {
     if (sentenceEnabled) {
       await updateSentenceNotifications(true, sentenceTime, count);
     } else {
+      await updateDailySentencePlans(dailySentences, count, { rebuildFuture: true, enabled: false });
       const userId = await getLearningUserId();
       await saveDailySentenceSettings(userId, { enabled: false, time: sentenceTime, count });
     }
@@ -872,8 +1064,14 @@ export default function GentalkApp() {
     { id: 'saved' as Screen, icon: Phone, label: '오늘의 문장' },
     { id: 'profile' as Screen, icon: User, label: '프로필' },
   ];
-  // 오늘의 문장 탭의 미리보기와 같은 순서로 홈에도 첫 문장을 표시합니다.
-  const todaySentence = dailySentences[0];
+  // 날짜가 바뀌었거나 오늘 배정표가 비어 있으면 같은 배정 규칙으로 즉시 표시합니다.
+  const todayDate = getTodayPlanDate();
+  const plannedTodaySentences = getPlanSentences(dailySentences, dailySentencePlans, todayDate);
+  const displayDailyPlans = plannedTodaySentences.length < Math.min(sentenceCount, dailySentences.length)
+    ? buildDailySentencePlans(dailySentences, sentenceCount, dailySentencePlans, todayDate)
+    : dailySentencePlans;
+  const todaySentences = getPlanSentences(dailySentences, displayDailyPlans, todayDate);
+  const todaySentence = todaySentences[0];
   const isStartupLoading = !hasResolvedStartupAuth || onboardingStatus === 'loading';
   const isTabScreen = screen === 'home' || screen === 'review' || screen === 'saved' || screen === 'profile';
 
@@ -934,6 +1132,7 @@ export default function GentalkApp() {
             </View>
             <View style={{ flex: 1, display: screen === 'review' ? 'flex' : 'none' }}>
               <ReviewScreen
+            key={`review-${displayLanguage}`}
             recentScenarios={recentScenarios}
             onScenario={(scenario) => openScenario(scenario, 'review')}
             onRemoveRecentScenario={(id) => void removeLearningRecord(id)}
@@ -942,18 +1141,22 @@ export default function GentalkApp() {
             </View>
             <View style={{ flex: 1, display: screen === 'saved' ? 'flex' : 'none' }}>
               <DailySentenceScreen
+                key={`saved-${displayLanguage}`}
                 sentenceTime={sentenceTime}
                 sentenceEnabled={sentenceEnabled}
                 sentenceCount={sentenceCount}
                 dailySentences={dailySentences}
+                todaySentences={todaySentences}
                 onOpenSchedule={() => setShowSentenceTime(true)}
                 onToggleSentence={updateSentenceNotifications}
                 onChangeSentenceCount={updateSentenceCount}
                 onRemoveSentence={(id) => void removeDailySentence(id)}
+                onSetSentenceCompleted={(id, month, completed) => void setDailySentenceCompleted(id, month, completed)}
               />
             </View>
             <View style={{ flex: 1, display: screen === 'profile' ? 'flex' : 'none' }}>
               <ProfileScreen
+                key={`profile-${displayLanguage}`}
                 name={profileName}
                 email={profileEmail}
                 imageUri={profileImageUri}
@@ -969,7 +1172,6 @@ export default function GentalkApp() {
                 }}
                 onOpenDataManagement={() => setShowDataManagement(true)}
                 onOpenAppInfo={() => setShowAppInfo(true)}
-                onLogout={() => void logout()}
                 onLogin={() => setScreen('welcome')}
                 isGuest={isGuestMode}
               />
@@ -978,6 +1180,7 @@ export default function GentalkApp() {
         ) : null}
         {!isStartupLoading && screen === 'detail' && currentScenario && (
           <DetailScreen
+            key={`detail-${currentScenario.id}-${displayLanguage}`}
             scenario={currentScenario}
             onBack={() => setScreen(learningReturnScreen)}
             onPlayWordGame={() => restartWordGame(currentScenario)}
@@ -999,6 +1202,10 @@ export default function GentalkApp() {
             initialStage={learningStartStage}
             wordGameOnly={wordGameOnly}
             nativeLanguage={displayLanguage}
+            previousFeedback={recentScenarios
+              .filter((item) => item.id !== currentScenario.id && item.learningFeedback)
+              .map((item) => item.learningFeedback!)
+              .slice(0, 5)}
           />
         )}
         {!isStartupLoading && screen === 'welcome' && (
@@ -1047,6 +1254,12 @@ export default function GentalkApp() {
         </View>
       )}
 
+      <GuestLearningDataModal
+        visible={showGuestLearningDataChoice}
+        onKeepExisting={() => resolveGuestDataHandling('merge')}
+        onReplaceWithGuest={() => resolveGuestDataHandling('replace')}
+      />
+
       <Modal visible={showExitConfirm} transparent animationType="fade" onRequestClose={() => setShowExitConfirm(false)}>
         <Pressable
           accessibilityRole="button"
@@ -1086,7 +1299,20 @@ export default function GentalkApp() {
         onDeleteLearning={() => void removeAllLearningData()}
         onDeleteDaily={() => void removeAllDailySentences()}
       />
-      <AppInfoModal visible={showAppInfo} onClose={() => setShowAppInfo(false)} />
+      <AppInfoModal
+        visible={showAppInfo}
+        onClose={() => setShowAppInfo(false)}
+        onOpenDeveloperMode={() => setShowDeveloperMode(true)}
+      />
+      <DeveloperModeModal
+        visible={showDeveloperMode}
+        rateLimitEnabled={developmentAiRateLimitEnabled}
+        onToggleRateLimit={(enabled) => {
+          setDevelopmentAiRateLimitEnabledState(enabled);
+          void setDevelopmentAiRateLimitEnabled(enabled);
+        }}
+        onClose={() => setShowDeveloperMode(false)}
+      />
 
       <LanguageSettingsModal
         visible={showLangSettings}
@@ -1121,13 +1347,13 @@ export default function GentalkApp() {
       <ProfileEditModal
         visible={showProfileEdit}
         name={profileName}
-        phone={profilePhone}
         email={profileEmail}
         imageUri={profileImageUri}
         isGuest={isGuestMode}
         isDeletingAccount={isDeletingAccount}
         onClose={() => setShowProfileEdit(false)}
         onSave={(profile) => void updateUserProfile(profile)}
+        onLogout={() => { setShowProfileEdit(false); void logout(); }}
         onDeleteAccount={confirmDeleteAccount}
       />
       <LegalNoticeModal visible={legalNotice !== null} kind={legalNotice} onClose={() => setLegalNotice(null)} />

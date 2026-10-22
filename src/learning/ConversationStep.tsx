@@ -15,6 +15,7 @@ import Animated, {
 import { AppText } from '@/components/gentalk/AppText';
 import { OperationErrorNotice } from '@/components/gentalk/OperationErrorNotice';
 import { translateText } from '@/data/translations';
+import { checkSpeechRecognition, type SpeechRecognitionSuggestion } from '@/services/learning-api';
 import type { ConversationMessage } from '@/types/feedback';
 
 type SpeechRecognitionPackage = typeof import('expo-speech-recognition');
@@ -107,6 +108,8 @@ export function ConversationStep({
 }: ConversationStepProps) {
   const [isListening, setIsListening] = useState(false);
   const [isWordListExpanded, setIsWordListExpanded] = useState(false);
+  const [isCheckingSpeech, setIsCheckingSpeech] = useState(false);
+  const [speechSuggestion, setSpeechSuggestion] = useState<SpeechRecognitionSuggestion | null>(null);
   const lastSpokenStaffText = useRef<string | null>(null);
   const speechLanguage = { ja: 'ja-JP', ko: 'ko-KR', zh: 'zh-CN', ru: 'ru-RU', ar: 'ar-SA', fr: 'fr-FR', es: 'es-ES', de: 'de-DE' }[learningLanguage] ?? 'en-US';
   const speechModule = speechRecognition?.ExpoSpeechRecognitionModule;
@@ -137,7 +140,19 @@ export function ConversationStep({
     const endSubscription = speechModule.addListener('end', () => setIsListening(false));
     const resultSubscription = speechModule.addListener('result', (event) => {
       const transcript = event.results[0]?.transcript;
-      if (transcript) onChangeMessage(transcript);
+      if (!transcript) return;
+      onChangeMessage(transcript);
+      if (!event.isFinal) return;
+      setSpeechSuggestion(null);
+      setIsCheckingSpeech(true);
+      void checkSpeechRecognition({
+        transcript,
+        learningLanguage,
+        vocabulary: words,
+        staffContext: messages.filter((item) => item.speaker === 'STAFF').slice(-3).flatMap((item) => [item.text, item.exampleReply ?? '']).filter(Boolean),
+      }).then((result) => {
+        if (result?.hasSuggestion && result.correctedText.toLowerCase() !== transcript.toLowerCase()) setSpeechSuggestion(result);
+      }).finally(() => setIsCheckingSpeech(false));
     });
     const errorSubscription = speechModule.addListener('error', (event) => {
       if (event.error === 'aborted') return;
@@ -151,7 +166,7 @@ export function ConversationStep({
       resultSubscription.remove();
       errorSubscription.remove();
     };
-  }, [onChangeMessage, speechModule]);
+  }, [learningLanguage, messages, onChangeMessage, speechModule, words]);
 
   async function toggleSpeechRecognition() {
     if (isListening) {
@@ -189,6 +204,8 @@ export function ConversationStep({
       interimResults: true,
       maxAlternatives: 1,
       continuous: false,
+      // 핵심 단어와 예시 문장을 인식기에 전달해 message/mashed 같은 오인식을 먼저 줄입니다.
+      contextualStrings: [...words, ...messages.flatMap((item) => item.speaker === 'STAFF' && item.exampleReply ? [item.exampleReply] : [])].slice(0, 80),
     });
   }
 
@@ -223,7 +240,22 @@ export function ConversationStep({
                 {item.exampleReply ? <Pressable onPress={() => onToggleStaffDetail(index, 'example')} className="rounded-lg bg-[#F3EBDD] px-2.5 py-1.5"><AppText className="text-[11px] font-black text-[#914523]">예시 답변</AppText></Pressable> : null}
                 {item.translation ? <Pressable onPress={() => onToggleStaffDetail(index, 'translation')} className="rounded-lg bg-[#F3EBDD] px-2.5 py-1.5"><AppText className="text-[11px] font-black text-[#914523]">해석</AppText></Pressable> : null}
               </View>
-              {visibleStaffDetails[index] === 'example' && item.exampleReply ? <View className="mt-2 self-stretch rounded-lg bg-[#F8F1E8] p-2"><AppText className="text-sm text-[#6B5843]">예시: {item.exampleReply}</AppText>{item.examplePronunciation ? <AppText className="mt-1 text-xs leading-5 text-[#8A7D6D]">발음: {item.examplePronunciation}</AppText> : null}</View> : null}
+              {visibleStaffDetails[index] === 'example' && item.exampleReply ? (
+                <View className="mt-2 self-stretch rounded-lg bg-[#F8F1E8] p-2">
+                  <View className="flex-row items-start gap-2">
+                    <AppText className="flex-1 text-sm text-[#6B5843]">예시: {item.exampleReply}</AppText>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="예시 문장 듣기"
+                      hitSlop={6}
+                      onPress={() => replayStaffSentence(item.exampleReply!)}
+                      className="h-8 w-8 items-center justify-center rounded-lg bg-white active:opacity-70">
+                      <Volume2 size={17} color="#914523" />
+                    </Pressable>
+                  </View>
+                  {item.examplePronunciation ? <AppText className="mt-1 text-xs leading-5 text-[#8A7D6D]">발음: {item.examplePronunciation}</AppText> : null}
+                </View>
+              ) : null}
               {visibleStaffDetails[index] === 'translation' && item.translation ? <AppText className="mt-2 self-stretch rounded-lg bg-[#F8F1E8] p-2 text-sm text-[#6B5843]">해석: {item.translation}</AppText> : null}
             </View>
           ) : null}
@@ -256,22 +288,33 @@ export function ConversationStep({
         <View className="gap-2">
           <TextInput
             value={message}
-            editable={!isSending}
+            editable={!isSending && !isCheckingSpeech}
             multiline
             numberOfLines={2}
             textAlignVertical="top"
-            onChangeText={onChangeMessage}
+            onChangeText={(value) => { setSpeechSuggestion(null); onChangeMessage(value); }}
             onFocus={onFocusMessageInput}
             placeholder={translateText('메시지를 입력하세요...')}
             placeholderTextColor="#A58E76"
             className="min-h-[68px] flex-1 rounded-xl border border-[#D9B37D] bg-white px-3 py-3 text-base text-[#231A0E]"
           />
+          {isCheckingSpeech ? <AppText className="px-1 text-xs font-bold text-[#8A7D6D]">인식한 문장을 확인하고 있어요...</AppText> : null}
+          {speechSuggestion ? (
+            <View className="rounded-xl border border-[#E8C8BA] bg-[#FFF7F3] px-3 py-3">
+              <AppText className="text-xs font-black text-[#914523]">발음 인식 제안</AppText>
+              <AppText className="mt-1 text-sm text-[#6B5843]"><AppText className="font-black text-[#C25338]">{speechSuggestion.heardPhrase}</AppText> → <AppText className="font-black text-[#187560]">{speechSuggestion.expectedPhrase}</AppText></AppText>
+              <View className="mt-3 flex-row gap-2">
+                <Pressable onPress={() => { onChangeMessage(speechSuggestion.correctedText); setSpeechSuggestion(null); }} className="flex-1 items-center rounded-lg bg-[#914523] py-2 active:opacity-80"><AppText className="text-xs font-black text-white">문장 적용</AppText></Pressable>
+                <Pressable onPress={() => setSpeechSuggestion(null)} className="flex-1 items-center rounded-lg border border-[#D9B37D] bg-white py-2 active:opacity-80"><AppText className="text-xs font-black text-[#914523]">이대로 전송</AppText></Pressable>
+              </View>
+            </View>
+          ) : null}
           <View className="flex-row gap-2">
-            <Pressable disabled={isSending} onPress={() => void toggleSpeechRecognition()} className={`flex-1 flex-row items-center justify-center gap-1 rounded-xl border border-[#D9B37D] py-3 active:opacity-80 ${isListening ? 'bg-[#F3EBDD]' : 'bg-white'} ${isSending ? 'opacity-50' : ''}`}>
+            <Pressable disabled={isSending || isCheckingSpeech} onPress={() => void toggleSpeechRecognition()} className={`flex-1 flex-row items-center justify-center gap-1 rounded-xl border border-[#D9B37D] py-3 active:opacity-80 ${isListening ? 'bg-[#F3EBDD]' : 'bg-white'} ${isSending || isCheckingSpeech ? 'opacity-50' : ''}`}>
               <Mic size={16} color="#914523" />
               <AppText className="text-sm font-black text-[#914523]">{isListening ? '듣는 중' : '말하기'}</AppText>
             </Pressable>
-            <Pressable disabled={isSending} onPress={onSend} className={`flex-1 items-center justify-center rounded-xl bg-[#914523] py-3 ${isSending ? 'opacity-50' : ''}`}><AppText className="font-bold text-white">{isSending ? '...' : '전송'}</AppText></Pressable>
+            <Pressable disabled={isSending || isCheckingSpeech} onPress={onSend} className={`flex-1 items-center justify-center rounded-xl bg-[#914523] py-3 ${isSending || isCheckingSpeech ? 'opacity-50' : ''}`}><AppText className="font-bold text-white">{isSending ? '...' : '전송'}</AppText></Pressable>
           </View>
         </View>
       )}

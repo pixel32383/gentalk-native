@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, View } from 'react-native';
-import { Check, ChevronRight, X } from 'lucide-react-native';
+import * as Speech from 'expo-speech';
+import { Check, ChevronRight, Volume2, VolumeX, X } from 'lucide-react-native';
 import { COLORS } from '@/data/constants';
 import { LANGUAGES } from '@/data/languages';
 import { AppText } from '@/components/gentalk/AppText';
@@ -8,6 +9,7 @@ import { translateTemplate } from '@/data/translations';
 import { MatchingCard } from '@/components/gentalk/MatchingCard';
 import { RoundButton } from '@/components/gentalk/RoundButton';
 import { generateConversationFeedback, sendConversationMessage } from '@/services/learning-api';
+import { getSelectedSpeechVoice, getSpeechPitch, getSpeechRate } from '@/services/voice-settings';
 import type { ConversationMessage, LearningFeedback } from '@/types/feedback';
 import type { LearningProgress, Scenario, VocabItem } from '@/types/learning';
 import { FeedbackStep } from './FeedbackStep';
@@ -17,6 +19,12 @@ import { VocabularyStep } from './VocabularyStep';
 import { ConversationStep } from './ConversationStep';
 
 function getLanguage(code: string) { return LANGUAGES.find((language) => language.code === code); }
+
+// 이전 버전에서 API 오류를 감추기 위해 저장되던 짧은 기본 문구입니다.
+// 실제 분석 결과가 아니므로 이어서 학습할 때 다시 AI 피드백을 생성합니다.
+function isLegacyFallbackFeedback(value: LearningFeedback | undefined) {
+  return value?.suggestions?.[0] === '대화 내용을 바탕으로 다시 한 번 자연스러운 표현을 연습해보세요.';
+}
 
 export function LearningFlowScreen({
   scenario,
@@ -30,6 +38,7 @@ export function LearningFlowScreen({
   initialStage = 0,
   wordGameOnly = false,
   nativeLanguage,
+  previousFeedback,
 }: {
   scenario: Scenario;
   onBack: () => void;
@@ -42,9 +51,12 @@ export function LearningFlowScreen({
   initialStage?: number;
   wordGameOnly?: boolean;
   nativeLanguage: 'en' | 'ko' | 'ja';
+  previousFeedback: LearningFeedback[];
 }) {
   const [stage, setStage] = useState(savedProgress?.stage ?? initialStage);
   const [selectedWords, setSelectedWords] = useState<string[]>(() => savedProgress?.selectedWords ?? (initialStage === 1 ? scenario.vocabulary.map((item) => item.word) : []));
+  const [wordSpeechEnabled, setWordSpeechEnabled] = useState(true);
+  const wordSpeechRequestRef = useRef(0);
   const [matched, setMatched] = useState<string[]>(() => savedProgress?.matchedWords ?? []);
   const [shuffledTranslations, setShuffledTranslations] = useState<VocabItem[]>([]);
   const [selectedPairWord, setSelectedPairWord] = useState<string | null>(null);
@@ -63,26 +75,40 @@ export function LearningFlowScreen({
   const [exampleReply, setExampleReply] = useState('');
   const [showConversationHint, setShowConversationHint] = useState(false);
   const [showExampleReply, setShowExampleReply] = useState(false);
-  const [feedback, setFeedback] = useState<LearningFeedback | null>(savedProgress?.feedback ?? null);
+  const [feedback, setFeedback] = useState<LearningFeedback | null>(
+    savedProgress?.feedback && !isLegacyFallbackFeedback(savedProgress.feedback) ? savedProgress.feedback : null,
+  );
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackRetryCount, setFeedbackRetryCount] = useState(0);
   const [messages, setMessages] = useState<ConversationMessage[]>(() => savedProgress?.messages ?? [
     { speaker: 'STAFF', text: scenario.dialogue[0]?.text ?? 'Hello! How can I help you?' },
   ]);
   const [showExitPrompt, setShowExitPrompt] = useState(false);
   const hasRestoredConversation = Boolean(savedProgress && savedProgress.stage >= 2);
+  const normalizeMessageForCorrection = (value: string) => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
   const buildCompletedScenario = (): Scenario => {
+    const phrases = [
+      ...(feedback?.recommendedReplies ?? []),
+      ...(feedback?.reusableSentence ? [feedback.reusableSentence] : []),
+    ].filter((phrase, index, items) => items.findIndex((item) => item.phrase === phrase.phrase) === index);
+
     return {
       ...scenario,
-      phrases: feedback?.recommendedReplies ?? [],
-      dialogue: messages.map((item) => ({
-        speaker: item.speaker === 'STAFF' ? 'A' : 'B',
-        role: item.speaker === 'STAFF' ? 'STAFF' : '나',
-        text: item.text,
-        translation: item.translation ?? item.text,
-        correction: item.speaker === 'YOU'
-          ? feedback?.messageCorrections?.find((correction) => correction.originalMessage.trim() === item.text.trim())
-          : undefined,
-      })),
+      phrases,
+      dialogue: messages.map((item) => {
+        const correction = item.speaker === 'YOU'
+          ? feedback?.messageCorrections?.find((candidate) =>
+            normalizeMessageForCorrection(candidate.originalMessage) === normalizeMessageForCorrection(item.text))
+          : undefined;
+        return {
+          speaker: item.speaker === 'STAFF' ? 'A' : 'B',
+          role: item.speaker === 'STAFF' ? 'STAFF' : '나',
+          text: item.text,
+          translation: item.translation ?? '',
+          correction,
+        };
+      }),
       learningFeedback: feedback ?? undefined,
       completedAt: new Date().toISOString(),
     };
@@ -102,6 +128,11 @@ export function LearningFlowScreen({
   const progressRef = useRef<LearningProgress | null>(null);
   const autoSaveRef = useRef(onAutoSave);
   const hasStartedAutoSave = useRef(false);
+  // 부모의 자동 저장으로 화면이 다시 그려져도 같은 대화의 피드백 요청은 한 번만 보냅니다.
+  // 그렇지 않으면 결과를 받은 직후 로딩 상태로 다시 돌아가는 깜빡임이 생길 수 있습니다.
+  const requestedFeedbackKeyRef = useRef<string | null>(null);
+  const feedbackRequestVersionRef = useRef(0);
+  const isMountedRef = useRef(true);
   const learningScrollRef = useRef<ScrollView>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
   autoSaveRef.current = onAutoSave;
@@ -122,6 +153,13 @@ export function LearningFlowScreen({
   useEffect(() => {
     progressRef.current = buildProgress();
   });
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
@@ -184,6 +222,17 @@ export function LearningFlowScreen({
     return () => subscription.remove();
   }, [onBack, wordGameOnly]);
   const conversationWords = words.map((item) => item.word);
+  const feedbackRequestKey = JSON.stringify({
+    scenarioId: scenario.id,
+    nativeLanguage,
+    messages: messages.map((item) => [item.speaker, item.text]),
+    previousFeedback: previousFeedback.slice(0, 5).map((item) => ({
+      suggestions: item.suggestions,
+      improvements: item.improvements,
+      nextPracticeGoal: item.nextPracticeGoal,
+      recurringWeakness: item.recurringWeakness,
+    })),
+  });
   const title = ['학습할 단어', '짝맞추기 게임', 'AI 회화 학습', '학습 피드백', '대화 타임라인'][stage];
   const subtitle = [
     translateTemplate('총 {count}개의 단어를 학습합니다', { count: words.length }),
@@ -193,7 +242,22 @@ export function LearningFlowScreen({
     '학습한 대화 내용을 복습하세요.',
   ][stage];
   const toggleWord = (word: string) => {
+    const wasSelected = selectedWords.includes(word);
     setSelectedWords((current) => current.includes(word) ? current.filter((item) => item !== word) : [...current, word]);
+    if (wasSelected) {
+      wordSpeechRequestRef.current += 1;
+      void Speech.stop().catch(() => {});
+      return;
+    }
+    if (!wordSpeechEnabled) return;
+
+    const requestId = ++wordSpeechRequestRef.current;
+    const speechLanguage = { ja: 'ja-JP', ko: 'ko-KR', zh: 'zh-CN', ru: 'ru-RU', ar: 'ar-SA', fr: 'fr-FR', es: 'es-ES', de: 'de-DE' }[scenario.langCode] ?? 'en-US';
+    void Speech.stop().then(async () => {
+      const voice = await getSelectedSpeechVoice(speechLanguage);
+      if (wordSpeechRequestRef.current !== requestId) return;
+      Speech.speak(word, { language: speechLanguage, rate: getSpeechRate(), pitch: getSpeechPitch(), voice });
+    }).catch(() => {});
   };
   const selectEnglishWord = (word: string) => {
     if (wrongPair || matched.includes(word)) return;
@@ -310,31 +374,49 @@ export function LearningFlowScreen({
 
   useEffect(() => {
     if (stage !== 3) return;
-    if (savedProgress?.feedback) {
+    if (savedProgress?.feedback && !isLegacyFallbackFeedback(savedProgress.feedback)) {
+      feedbackRequestVersionRef.current += 1;
       setFeedback(savedProgress.feedback);
       setIsLoadingFeedback(false);
+      setFeedbackError(null);
       return;
     }
-    let active = true;
+
+    // 같은 대화 내용으로 요청을 다시 보내지 않습니다. 자동 저장으로 부모가 다시 렌더링되어도
+    // 결과 화면이 "대화 내용을 분석하고 있어요" 화면으로 되돌아가지 않게 합니다.
+    if (requestedFeedbackKeyRef.current === feedbackRequestKey) return;
+
+    const requestVersion = feedbackRequestVersionRef.current + 1;
+    feedbackRequestVersionRef.current = requestVersion;
+    requestedFeedbackKeyRef.current = feedbackRequestKey;
     setIsLoadingFeedback(true);
     setFeedback(null);
+    setFeedbackError(null);
     void generateConversationFeedback({
       situation: scenario.situation,
       learningLanguage: scenario.langCode,
       nativeLanguage: nativeLanguage,
       messages,
+      // 반복 약점 판단에는 최근 기록 두 개면 충분합니다. 이전 피드백 전체를 보내지 않아 생성 대기 시간을 줄입니다.
+      previousFeedback: previousFeedback.slice(0, 2).map((item) => ({
+        suggestions: item.suggestions,
+        improvements: item.improvements,
+        nextPracticeGoal: item.nextPracticeGoal,
+        recurringWeakness: item.recurringWeakness,
+      })),
     })
-      .then((data) => { if (active) setFeedback(data); })
-      .catch(() => {
-        if (active) setFeedback({
-          suggestions: ['대화 내용을 바탕으로 다시 한 번 자연스러운 표현을 연습해보세요.', '문장을 조금 더 구체적으로 만들어보세요.', '핵심 단어를 넣어 다시 말해보세요.'],
-          strengths: ['대화에 적극적으로 참여했습니다.', '상황에 맞는 표현을 사용했습니다.'],
-          improvements: ['문장을 조금 더 구체적으로 만들어보세요.', '핵심 단어를 넣어 다시 말해보세요.'],
-        });
+      .then((data) => {
+        if (isMountedRef.current && feedbackRequestVersionRef.current === requestVersion) setFeedback(data);
       })
-      .finally(() => { if (active) setIsLoadingFeedback(false); });
-    return () => { active = false; };
-  }, [scenario.id, stage]);
+      .catch((error: unknown) => {
+        if (!isMountedRef.current || feedbackRequestVersionRef.current !== requestVersion) return;
+        const message = error instanceof Error ? error.message : '네트워크 상태를 확인한 뒤 다시 시도해주세요.';
+        setFeedbackError(message);
+      })
+      .finally(() => {
+        if (isMountedRef.current && feedbackRequestVersionRef.current === requestVersion) setIsLoadingFeedback(false);
+      });
+  }, [feedbackRequestKey, feedbackRetryCount, stage]);
 
   return (
     <>
@@ -367,11 +449,28 @@ export function LearningFlowScreen({
             {stage === 0 ? <AppText className="mt-1 text-sm font-bold text-[#6B5843]">아래에 모르거나 헷갈리는 단어를 선택해주세요.</AppText> : null}
           </View>
           {stage === 0 ? (
-            <Pressable
-              onPress={() => setSelectedWords((current) => current.length === words.length ? [] : words.map((item) => item.word))}
-              className="rounded-lg border border-[#D8CAB5] bg-white px-3 py-2 active:opacity-70">
-              <AppText className="text-xs font-black text-[#914523]">{selectedWords.length === words.length ? '선택 해제' : '전체선택'}</AppText>
-            </Pressable>
+            <View className="flex-row items-center gap-2">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={wordSpeechEnabled ? '단어 터치 시 발음 켜짐' : '단어 터치 시 발음 꺼짐'}
+                accessibilityState={{ selected: wordSpeechEnabled }}
+                hitSlop={4}
+                onPress={() => {
+                  if (wordSpeechEnabled) {
+                    wordSpeechRequestRef.current += 1;
+                    void Speech.stop().catch(() => {});
+                  }
+                  setWordSpeechEnabled(!wordSpeechEnabled);
+                }}
+                className={`h-10 w-10 items-center justify-center rounded-xl border active:opacity-70 ${wordSpeechEnabled ? 'border-[#914523] bg-[#914523]' : 'border-[#D8CAB5] bg-white'}`}>
+                {wordSpeechEnabled ? <Volume2 size={18} color="#FFFFFF" /> : <VolumeX size={18} color="#914523" />}
+              </Pressable>
+              <Pressable
+                onPress={() => setSelectedWords((current) => current.length === words.length ? [] : words.map((item) => item.word))}
+                className="rounded-lg border border-[#D8CAB5] bg-white px-3 py-2 active:opacity-70">
+                <AppText className="text-xs font-black text-[#914523]">{selectedWords.length === words.length ? '선택 해제' : '전체선택'}</AppText>
+              </Pressable>
+            </View>
           ) : null}
         </View>
         {stage === 0 ? (
@@ -423,7 +522,17 @@ export function LearningFlowScreen({
             onDismissConversationError={() => setHasConversationError(false)}
           />
         )}
-        {stage === 3 && <FeedbackStep feedback={feedback} isLoading={isLoadingFeedback} />}
+        {stage === 3 && (
+          <FeedbackStep
+            feedback={feedback}
+            isLoading={isLoadingFeedback}
+            errorMessage={feedbackError}
+            onRetry={() => {
+              requestedFeedbackKeyRef.current = null;
+              setFeedbackRetryCount((current) => current + 1);
+            }}
+          />
+        )}
         {stage === 4 && <TimelineStep messages={messages} />}
       </ScrollView>
 
@@ -480,7 +589,7 @@ export function LearningFlowScreen({
     </KeyboardAvoidingView>
     <Modal visible={showExitPrompt} transparent animationType="fade" onRequestClose={() => setShowExitPrompt(false)}>
       <View className="flex-1 items-center justify-center bg-black/40 px-6">
-        <View className="w-full rounded-2xl bg-white p-5">
+        <View className="w-full rounded-2xl border border-[#D8CAB5] bg-white p-5">
           <AppText className="text-xl font-black text-[#231A0E]">학습을 저장하시겠습니까?</AppText>
           <AppText className="mt-2 text-sm leading-6 text-[#8A7D6D]">현재 단계와 대화 내용을 저장하면 홈에서 이어서 학습할 수 있어요.</AppText>
           <Pressable onPress={() => { onSaveAndExit(buildProgress()); setShowExitPrompt(false); }} className="mt-5 items-center rounded-xl bg-[#255F5A] py-3 active:opacity-80"><AppText className="font-black text-white">저장 후 나가기</AppText></Pressable>

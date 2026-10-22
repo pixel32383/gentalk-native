@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import * as Speech from 'expo-speech';
 import { getSelectedSpeechVoice, getSpeechPitch, getSpeechRate } from '@/services/voice-settings';
+import { getKnownLearnerTranslation } from '@/services/conversation-translation';
+import { useDisplayLanguage } from '@/data/translations';
 import type { DialogueLine } from '@/types/learning';
 import { AppText } from './AppText';
 
@@ -27,14 +29,22 @@ function CorrectedSentence({ line }: { line: DialogueLine }) {
             : part;
         })}
       </AppText>
+      {correction.correctedTranslation ? (
+        <>
+          <AppText className="mt-2 text-[10px] font-black text-red-500">수정 문장 해석</AppText>
+          <AppText className="mt-0.5 text-xs leading-5 text-[#7A4A46]">{correction.correctedTranslation}</AppText>
+        </>
+      ) : null}
     </View>
   );
 }
 
 export function DialogueBubble({ line, languageCode }: { line: DialogueLine; languageCode: string }) {
   const isStaff = line.speaker === 'A';
+  const displayLanguage = useDisplayLanguage();
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const hasTranslation = Boolean(line.translation && line.translation !== line.text);
+  const translation = (!isStaff && getKnownLearnerTranslation(line.text, languageCode, displayLanguage)) || line.translation;
+  const hasTranslation = Boolean(translation && translation !== line.text);
   const speechText = line.correction?.correctedMessage ?? line.text;
   const speechLanguage = { ja: 'ja-JP', ko: 'ko-KR', zh: 'zh-CN', ru: 'ru-RU', ar: 'ar-SA', fr: 'fr-FR', es: 'es-ES', de: 'de-DE' }[languageCode] ?? 'en-US';
   const speak = () => {
@@ -58,7 +68,7 @@ export function DialogueBubble({ line, languageCode }: { line: DialogueLine; lan
       });
     });
   };
-  const content = <><AppText className="mb-1 text-xs font-black text-[#C77932]">{line.role}</AppText><AppText className="text-base font-black leading-6 text-[#231A0E]">{line.text}</AppText>{line.rom ? <AppText className="mt-1 font-mono text-xs text-[#8A7D6D]">{line.rom}</AppText> : null}{hasTranslation ? <AppText className="mt-2 text-xs leading-5 text-[#8A7D6D]">{line.translation}</AppText> : null}{!isStaff ? <CorrectedSentence line={line} /> : null}</>;
+  const content = <><AppText className="mb-1 text-xs font-black text-[#C77932]">{line.role}</AppText><AppText className="text-base font-black leading-6 text-[#231A0E]">{line.text}</AppText>{line.rom ? <AppText className="mt-1 font-mono text-xs text-[#8A7D6D]">{line.rom}</AppText> : null}{hasTranslation ? <AppText className="mt-2 text-xs leading-5 text-[#8A7D6D]">{translation}</AppText> : null}{!isStaff ? <CorrectedSentence line={line} /> : null}</>;
 
   if (isStaff) return <View className="self-start rounded-2xl border border-[#E9DDCE] bg-white p-4">{content}</View>;
   return <Pressable accessibilityRole="button" accessibilityLabel={`${speechText} 듣기`} onPress={speak} className={`self-end rounded-2xl bg-[#E7F2EF] p-4 active:opacity-75 ${isSpeaking ? 'border border-[#255F5A]' : ''}`}>{content}</Pressable>;

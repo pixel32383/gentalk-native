@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL ?? 'gpt-4.1-mini',
-        instructions: `You create language-learning data. Treat the provided situation as authoritative and never replace it with another travel scenario. Return only data about that exact situation. The conversationTitle, openingStaffMessage, openingExampleReply, and every vocabulary word must be in the requested learning language. Every openingTranslation, vocabulary translation, and culturalTips item must be a complete, natural translation in the requested native language. culturalTips must contain 10 distinct, practical cultural or usage tips directly relevant to the exact situation. openingExamplePronunciation represents the sound of openingExampleReply, never its meaning. ${pronunciationGuideRule(nativeLanguage)} Do not use IPA. Never copy a learning-language sentence into a translation field. In particular, when the learning language is Japanese and the native language is Korean, all translation fields and culturalTips must be natural Korean while all learning fields must be Japanese. The openingStaffMessage must be a natural first line spoken by the staff member, not an explanation or an instruction to the learner. Provide one short, natural example reply the learner can say next in the learning language.`,
+        instructions: `You create language-learning data. Treat the provided situation as authoritative and never replace it with another travel scenario. Return only data about that exact situation. The conversationTitle, openingStaffMessage, openingExampleReply, and every vocabulary word must be in the requested learning language. Every openingTranslation and vocabulary translation must be a complete, natural translation in the requested native language. culturalTips must contain 10 distinct, practical cultural or usage tips directly relevant to the exact situation. Each culturalTips item must contain the same tip translated naturally into Korean (ko), English (en), and Japanese (ja), so the app can change it immediately when the learner changes their display language. openingExamplePronunciation represents the sound of openingExampleReply, never its meaning. ${pronunciationGuideRule(nativeLanguage)} Do not use IPA. Never copy a learning-language sentence into a translation field. In particular, when the learning language is Japanese and the native language is Korean, all translation fields must be natural Korean while all learning fields must be Japanese. The openingStaffMessage must be a natural first line spoken by the staff member, not an explanation or an instruction to the learner. Provide one short, natural example reply the learner can say next in the learning language. Every vocabulary pos value MUST use the provided Korean category only; never return English labels such as noun, phrase, or sentence.`,
         input: JSON.stringify({
           situation: normalizedSituation,
           learningLanguage,
@@ -65,7 +65,14 @@ export async function POST(request: Request) {
                 openingTranslation: { type: 'string' },
                 openingExampleReply: { type: 'string' },
                 openingExamplePronunciation: { type: 'string' },
-                culturalTips: { type: 'array', minItems: 10, maxItems: 10, items: { type: 'string' } },
+                culturalTips: {
+                  type: 'array', minItems: 10, maxItems: 10,
+                  items: {
+                    type: 'object', additionalProperties: false,
+                    required: ['ko', 'en', 'ja'],
+                    properties: { ko: { type: 'string' }, en: { type: 'string' }, ja: { type: 'string' } },
+                  },
+                },
                 vocabulary: {
                   type: 'array',
                   minItems: normalizedCount,
@@ -77,7 +84,7 @@ export async function POST(request: Request) {
                     properties: {
                       word: { type: 'string' },
                       translation: { type: 'string' },
-                      pos: { type: 'string' },
+                      pos: { type: 'string', enum: ['명사', '고유명사', '동사', '구동사', '형용사', '부사', '대명사', '전치사', '접속사', '감탄사', '관사', '한정사', '표현', '숙어', '문장', '절'] },
                     },
                   },
                 },
@@ -103,8 +110,8 @@ export async function POST(request: Request) {
     if (!outputText) {
       throw new Error('Missing vocabulary response from AI');
     }
-    const lesson = JSON.parse(outputText) as { conversationTitle: string; openingStaffMessage: string; openingTranslation: string; openingExampleReply: string; openingExamplePronunciation: string; culturalTips: string[]; vocabulary: VocabularyItem[] };
-    if (!lesson.conversationTitle || !lesson.openingStaffMessage || !lesson.openingTranslation || !lesson.openingExampleReply || typeof lesson.openingExamplePronunciation !== 'string' || !Array.isArray(lesson.culturalTips) || lesson.culturalTips.length !== 10 || !Array.isArray(lesson.vocabulary) || lesson.vocabulary.length !== normalizedCount) {
+    const lesson = JSON.parse(outputText) as { conversationTitle: string; openingStaffMessage: string; openingTranslation: string; openingExampleReply: string; openingExamplePronunciation: string; culturalTips: Array<{ ko: string; en: string; ja: string }>; vocabulary: VocabularyItem[] };
+    if (!lesson.conversationTitle || !lesson.openingStaffMessage || !lesson.openingTranslation || !lesson.openingExampleReply || typeof lesson.openingExamplePronunciation !== 'string' || !Array.isArray(lesson.culturalTips) || lesson.culturalTips.length !== 10 || !lesson.culturalTips.every((tip) => tip && typeof tip.ko === 'string' && typeof tip.en === 'string' && typeof tip.ja === 'string') || !Array.isArray(lesson.vocabulary) || lesson.vocabulary.length !== normalizedCount) {
       throw new Error('Invalid AI vocabulary response');
     }
 

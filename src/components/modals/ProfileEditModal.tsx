@@ -3,42 +3,41 @@ import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Te
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Camera, Mail, Phone, User, X } from 'lucide-react-native';
+import { Camera, LogOut, Mail, User, X } from 'lucide-react-native';
 import { AppText } from '@/components/gentalk/AppText';
-import { translateText } from '@/data/translations';
+import { translateText, useDisplayLanguage } from '@/data/translations';
 import { modalStyles } from '@/components/modals/modal-styles';
 import { profileEditStyles } from '@/components/modals/profile-edit-styles';
 
-type Profile = { name: string; phone: string; email: string; imageUri: string | null };
+type Profile = { name: string; email: string; imageUri: string | null };
 
-export function ProfileEditModal({ visible, name, phone, email, imageUri, isGuest, isDeletingAccount, onClose, onSave, onDeleteAccount }: {
+export function ProfileEditModal({ visible, name, email, imageUri, isGuest, isDeletingAccount, onClose, onSave, onLogout, onDeleteAccount }: {
   visible: boolean;
   name: string;
-  phone: string;
   email: string;
   imageUri: string | null;
   isGuest: boolean;
   isDeletingAccount: boolean;
   onClose: () => void;
   onSave: (profile: Profile) => void;
+  onLogout: () => void;
   onDeleteAccount: () => void;
 }) {
+  useDisplayLanguage();
   const insets = useSafeAreaInsets();
   const [draftName, setDraftName] = useState(name);
-  const [draftPhone, setDraftPhone] = useState(phone);
   const [draftImageUri, setDraftImageUri] = useState<string | null>(imageUri);
 
   useEffect(() => {
     if (!visible) return;
     setDraftName(name);
-    setDraftPhone(phone);
     setDraftImageUri(imageUri);
-  }, [imageUri, name, phone, visible]);
+  }, [imageUri, name, visible]);
 
   async function pickProfileImage() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('사진 접근 권한 필요', '프로필 이미지를 선택하려면 사진 접근 권한이 필요합니다.');
+      Alert.alert(translateText('사진 접근 권한 필요'), translateText('프로필 이미지를 선택하려면 사진 접근 권한이 필요합니다.'));
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -50,10 +49,10 @@ export function ProfileEditModal({ visible, name, phone, email, imageUri, isGues
   function saveProfile() {
     const nextName = draftName.trim();
     if (!nextName) {
-      Alert.alert('이름을 입력해주세요.');
+      Alert.alert(translateText('이름을 입력해주세요.'));
       return;
     }
-    onSave({ name: nextName, phone: draftPhone.trim(), email, imageUri: draftImageUri });
+    onSave({ name: nextName, email, imageUri: draftImageUri });
     onClose();
   }
 
@@ -96,24 +95,22 @@ export function ProfileEditModal({ visible, name, phone, email, imageUri, isGues
               </View>
 
               <View style={profileEditStyles.field}>
-                <AppText style={profileEditStyles.fieldLabel}>전화번호</AppText>
-                <View style={profileEditStyles.inputRow}>
-                  <Phone size={18} color="#8A7D6D" />
-                  <TextInput accessibilityLabel={translateText('전화번호')} value={draftPhone} onChangeText={(value) => setDraftPhone(value.replace(/[^0-9+\-\s]/g, '').slice(0, 20))} placeholder="010-1234-5678" placeholderTextColor="#A58E76" keyboardType="phone-pad" style={profileEditStyles.input} />
-                </View>
-              </View>
-
-              <View style={profileEditStyles.field}>
                 <AppText style={profileEditStyles.fieldLabel}>Google 계정</AppText>
                 <View style={[profileEditStyles.inputRow, profileEditStyles.inputRowDisabled]}>
                   <Mail size={18} color="#8A7D6D" />
-                  <TextInput accessibilityLabel={translateText('Google 계정 이메일')} value={isGuest ? '게스트 모드' : email} editable={false} placeholder="example@gmail.com" placeholderTextColor="#A58E76" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" style={[profileEditStyles.input, profileEditStyles.inputDisabled]} />
+                  <TextInput accessibilityLabel={translateText('Google 계정 이메일')} value={isGuest ? translateText('게스트 모드') : email} editable={false} placeholder="example@gmail.com" placeholderTextColor="#A58E76" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" style={[profileEditStyles.input, profileEditStyles.inputDisabled]} />
                 </View>
                 <AppText style={profileEditStyles.fieldHelp}>{isGuest ? '로그인하면 학습 기록을 계정에 저장할 수 있습니다.' : 'Google 계정은 변경이 불가능합니다.'}</AppText>
                 {!isGuest ? (
-                  <Pressable accessibilityRole="button" disabled={isDeletingAccount} onPress={onDeleteAccount} style={({ pressed }) => [profileEditStyles.deleteAccountButton, (pressed || isDeletingAccount) && { opacity: 0.68 }]}>
-                    <AppText style={profileEditStyles.deleteAccountText}>{isDeletingAccount ? '탈퇴 처리 중...' : '탈퇴하기'}</AppText>
-                  </Pressable>
+                  <View style={profileEditStyles.accountActions}>
+                    <Pressable accessibilityRole="button" onPress={onLogout} style={({ pressed }) => [profileEditStyles.logoutButton, pressed && { opacity: 0.68 }]}>
+                      <LogOut size={15} color="#914523" />
+                      <AppText style={profileEditStyles.logoutText}>로그아웃</AppText>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" disabled={isDeletingAccount} onPress={onDeleteAccount} style={({ pressed }) => [profileEditStyles.deleteAccountButton, (pressed || isDeletingAccount) && { opacity: 0.68 }]}>
+                      <AppText style={profileEditStyles.deleteAccountText}>{isDeletingAccount ? '탈퇴 처리 중...' : '탈퇴하기'}</AppText>
+                    </Pressable>
+                  </View>
                 ) : null}
               </View>
             </ScrollView>

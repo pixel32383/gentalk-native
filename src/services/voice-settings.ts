@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Speech from 'expo-speech';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
+import { clearPendingSyncOperation, getPendingSyncOperations, queuePendingSyncOperation } from '@/services/pending-sync';
+import { waitForRemoteWrite } from '@/services/remote-write';
 
 const DEFAULT_SPEECH_RATE = 1;
 let activeSpeechRate = DEFAULT_SPEECH_RATE;
@@ -104,6 +106,11 @@ export async function getSelectedSpeechVoice(language: string, mode: SpeechVoice
 
 export async function loadVoiceSettings(userId: string): Promise<VoiceSettings> {
   const cached = await loadCachedVoiceSettings(userId);
+  const pending = (await getPendingSyncOperations(userId)).find((item) => item.type === 'save-voice-settings');
+  if (pending?.type === 'save-voice-settings') {
+    applyVoiceSettings(pending.settings);
+    return pending.settings;
+  }
 
   try {
     const snapshot = await getDoc(doc(db, 'users', userId));
@@ -132,10 +139,12 @@ export async function saveVoiceSettings(userId: string, settings: VoiceSettings)
   const normalized = normalizeVoiceSettings(settings);
   applyVoiceSettings(normalized);
   await cacheVoiceSettings(userId, normalized);
-  await setDoc(doc(db, 'users', userId), {
+  const operationId = await queuePendingSyncOperation({ userId, type: 'save-voice-settings', settings: normalized });
+  await waitForRemoteWrite(setDoc(doc(db, 'users', userId), {
     voiceSettings: normalized,
     voiceSettingsUpdatedAt: serverTimestamp(),
-  }, { merge: true });
+  }, { merge: true }));
+  await clearPendingSyncOperation(operationId);
 }
 
 export async function loadSpeechRate(userId: string) {

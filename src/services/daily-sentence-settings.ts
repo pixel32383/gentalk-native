@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
+import { clearPendingSyncOperation, getPendingSyncOperations, queuePendingSyncOperation } from '@/services/pending-sync';
+import { waitForRemoteWrite } from '@/services/remote-write';
 
 export type DailySentenceSettings = {
   enabled: boolean;
@@ -47,6 +49,8 @@ async function cacheSettings(userId: string, settings: DailySentenceSettings) {
 
 export async function loadDailySentenceSettings(userId: string): Promise<DailySentenceSettings> {
   const cached = await loadCachedSettings(userId);
+  const pending = (await getPendingSyncOperations(userId)).find((item) => item.type === 'save-daily-sentence-settings');
+  if (pending?.type === 'save-daily-sentence-settings') return pending.settings;
 
   try {
     const snapshot = await getDoc(doc(db, 'users', userId));
@@ -72,8 +76,10 @@ export async function loadDailySentenceSettings(userId: string): Promise<DailySe
 export async function saveDailySentenceSettings(userId: string, settings: DailySentenceSettings): Promise<void> {
   const normalized = normalizeSettings(settings);
   await cacheSettings(userId, normalized);
-  await setDoc(doc(db, 'users', userId), {
+  const operationId = await queuePendingSyncOperation({ userId, type: 'save-daily-sentence-settings', settings: normalized });
+  await waitForRemoteWrite(setDoc(doc(db, 'users', userId), {
     dailySentenceSettings: normalized,
     dailySentenceSettingsUpdatedAt: serverTimestamp(),
-  }, { merge: true });
+  }, { merge: true }));
+  await clearPendingSyncOperation(operationId);
 }

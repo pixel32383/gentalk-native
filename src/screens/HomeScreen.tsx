@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
-import { BookOpen, ChevronRight, Globe, Phone, Search, X } from 'lucide-react-native';
+import { BookOpen, ChevronRight, Globe, Hourglass, Phone, Search, X } from 'lucide-react-native';
+import Animated, { cancelAnimation, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { AppHeader } from '@/components/gentalk/AppHeader';
 import { AppText } from '@/components/gentalk/AppText';
 import { ScenarioCard } from '@/components/gentalk/ScenarioCard';
@@ -11,6 +12,20 @@ import { SCENARIOS } from '@/data/scenarios';
 import { COLORS } from '@/data/constants';
 import { formatScenarioCount, formatWordCount, translateText, useDisplayLanguage } from '@/data/translations';
 import type { LearningProgress, PhraseItem, Scenario } from '@/types/learning';
+
+function GenerationHourglass() {
+  const reducedMotion = useReducedMotion();
+  const rotation = useSharedValue(0);
+  const style = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.get()}deg` }] }));
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    rotation.set(withRepeat(withTiming(360, { duration: 1100 }), -1, false));
+    return () => cancelAnimation(rotation);
+  }, [reducedMotion, rotation]);
+
+  return <Animated.View style={style}><Hourglass size={17} color="#FFFFFF" /></Animated.View>;
+}
 
 export function HomeScreen({
   savedIds,
@@ -140,7 +155,7 @@ export function HomeScreen({
             void onStartLearning(search);
           }}
           className={`mt-3 flex-row items-center justify-center gap-2 rounded-xl bg-[#8C3F1E] px-4 py-3 active:opacity-80 ${isStartingLearning ? 'opacity-60' : ''}`}>
-          <Search size={16} color="#FFFFFF" />
+          {isStartingLearning ? <GenerationHourglass /> : <Search size={16} color="#FFFFFF" />}
           <AppText className="text-sm font-black text-white">{isStartingLearning ? '단어를 생성하고 있어요...' : '상황 학습 시작'}</AppText>
         </Pressable>
         {isStartingLearning ? (
@@ -161,7 +176,8 @@ export function HomeScreen({
             {inProgressLearning.map((progress) => {
               const language = LANGUAGES.find((item) => item.code === progress.scenario.langCode);
               const stageLabel = ['단어 학습', '짝맞추기 게임', 'AI 회화 학습', '학습 피드백', '대화 타임라인'][progress.stage] ?? '상황 학습';
-              return <Pressable key={progress.id} onPress={() => onResumeLearning(progress)} className="w-64 rounded-2xl border border-[#D8CAB5] bg-[#F3EBDD] p-4 active:opacity-75"><View className="flex-row items-start justify-between gap-2"><View className="min-w-0 flex-1"><AppText numberOfLines={1} className="text-base font-black text-[#231A0E]">{progress.scenario.situation}</AppText><AppText className="mt-1 text-xs text-[#8A7D6D]">{language?.flag} {language?.label} · {stageLabel} {progress.stage + 1}/5</AppText></View><Pressable onPress={(event) => { event.stopPropagation(); onRemoveInProgressLearning(progress.id); }} accessibilityRole="button" accessibilityLabel="진행 중인 학습 삭제" className="h-7 w-7 items-center justify-center rounded-full bg-white active:opacity-70"><X size={14} color={COLORS.muted} /></Pressable></View><View className="mt-4 flex-row items-center justify-between"><AppText className="text-xs font-black text-[#255F5A]">계속하기</AppText><ChevronRight size={16} color={COLORS.primary} /></View></Pressable>;
+              const languageLabel = language ? `${language.flag} ${translateText(language.label)}` : '';
+              return <Pressable key={progress.id} onPress={() => onResumeLearning(progress)} className="w-64 rounded-2xl border border-[#D8CAB5] bg-[#F3EBDD] p-4 active:opacity-75"><View className="flex-row items-start justify-between gap-2"><View className="min-w-0 flex-1"><AppText numberOfLines={1} className="text-base font-black text-[#231A0E]">{progress.scenario.situation}</AppText><AppText className="mt-1 text-xs text-[#8A7D6D]">{languageLabel} · {translateText(stageLabel)} {progress.stage + 1}/5</AppText></View><Pressable onPress={(event) => { event.stopPropagation(); onRemoveInProgressLearning(progress.id); }} accessibilityRole="button" accessibilityLabel="진행 중인 학습 삭제" className="h-7 w-7 items-center justify-center rounded-full bg-white active:opacity-70"><X size={14} color={COLORS.muted} /></Pressable></View><View className="mt-4 flex-row items-center justify-between"><AppText className="text-xs font-black text-[#255F5A]">계속하기</AppText><ChevronRight size={16} color={COLORS.primary} /></View></Pressable>;
             })}
           </ScrollView>
         </View>

@@ -36,28 +36,28 @@ export async function requestNotificationPermissionOnFirstLogin(showResult = fal
   return false;
 }
 
-export async function scheduleDailySentenceNotifications(time: string, count: number, sentences: Array<{ text: string; translation: string }>) {
+export type DailySentenceNotificationPlan = {
+  date: string;
+  sentences: Array<{ text: string; translation: string }>;
+};
+
+export async function scheduleDailySentenceNotifications(time: string, plans: DailySentenceNotificationPlan[]) {
   if (!(await requestPermission())) return false;
   await cancelDailySentenceNotifications();
-  const [hour, minute] = time.split(':').map(Number);
-  const selected = sentences.slice(0, count);
-  if (selected.length === 0) return false;
-  const firstDate = new Date();
-  firstDate.setHours(hour, minute, 0, 0);
-  if (firstDate.getTime() <= Date.now()) firstDate.setDate(firstDate.getDate() + 1);
+  const upcomingPlans = plans.filter((plan) => plan.sentences.length > 0).map((plan) => ({
+    ...plan,
+    deliveryDate: new Date(`${plan.date}T${time}:00`),
+  })).filter((plan) => plan.deliveryDate.getTime() > Date.now());
+  if (upcomingPlans.length === 0) return false;
 
-  await Promise.all(Array.from({ length: 14 }, (_, dayOffset) => {
-    const deliveryDate = new Date(firstDate);
-    deliveryDate.setDate(firstDate.getDate() + dayOffset);
-    const dailySentences = Array.from({ length: Math.min(count, sentences.length) }, (_, sentenceOffset) =>
-      sentences[(dayOffset * count + sentenceOffset) % sentences.length],
-    );
+  await Promise.all(upcomingPlans.map(({ date, sentences, deliveryDate }) => {
+    const dailySentences = sentences;
     return Notifications.scheduleNotificationAsync({
       content: {
         title: dailySentences.length > 1 ? `오늘의 문장 ${dailySentences.length}개` : '오늘의 문장',
         body: dailySentences.map((sentence, index) => `${index + 1}. ${sentence.text}\n${sentence.translation}`).join('\n\n'),
         sound: 'default',
-        data: { kind: 'daily-sentence', screen: 'saved', deliveryDate: deliveryDate.toISOString() },
+        data: { kind: 'daily-sentence', screen: 'saved', deliveryDate: date },
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: deliveryDate, channelId: 'daily-sentence' },
     });

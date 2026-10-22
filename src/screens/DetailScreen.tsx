@@ -9,6 +9,7 @@ import { DialogueBubble } from '@/components/gentalk/DialogueBubble';
 import { PhraseRow } from '@/components/gentalk/PhraseRow';
 import { RoundButton } from '@/components/gentalk/RoundButton';
 import { VocabRow } from '@/components/gentalk/VocabRow';
+import { translateText, useDisplayLanguage } from '@/data/translations';
 import type { Scenario } from '@/types/learning';
 
 type DetailTab = 'vocab' | 'phrases' | 'dialogue' | 'feedback';
@@ -29,13 +30,19 @@ export function DetailScreen({
   dailySentenceIds: string[];
   onToggleDailySentence: (phrase: import('@/types/learning').PhraseItem, index: number) => void;
 }) {
+  const displayLanguage = useDisplayLanguage();
   const [tab, setTab] = useState<DetailTab>('vocab');
   const lang = LANGUAGES.find((language) => language.code === scenario.langCode);
+  const languageLabel = lang ? `${lang.flag} ${translateText(lang.label)}` : '';
   const hasFeedbackToReview = Boolean(
     scenario.learningFeedback
       && ((scenario.learningFeedback.messageCorrections?.length ?? 0) > 0 || scenario.learningFeedback.improvements.length > 0),
   );
   const showFeedbackNotice = hasFeedbackToReview && !scenario.feedbackReviewed;
+  const selectedCulturalTip = scenario.culturalNotes?.[scenario.culturalNoteIndex ?? 0];
+  const displayedCulturalTip = typeof selectedCulturalTip === 'string'
+    ? selectedCulturalTip
+    : selectedCulturalTip?.[displayLanguage] ?? scenario.culturalNote;
 
   return (
     <View className="flex-1">
@@ -45,7 +52,7 @@ export function DetailScreen({
         </RoundButton>
         <View className="min-w-0 flex-1">
           <AppText className="font-mono text-[11px] text-[#8A7D6D]">
-            {lang?.flag} {lang?.label}
+            {languageLabel}
           </AppText>
           <AppText numberOfLines={1} className="text-base font-black text-[#231A0E]">
             {scenario.situation}
@@ -77,7 +84,7 @@ export function DetailScreen({
                   setTab(item);
                   if (item === 'feedback' && showFeedbackNotice) onFeedbackViewed();
                 }}
-                className={`relative flex-1 rounded-lg py-2.5 ${tab === item ? 'bg-white shadow-sm' : ''}`}>
+                className={`will-change-variable relative flex-1 rounded-lg py-2.5 ${tab === item ? 'bg-white shadow-sm' : ''}`}>
                 <AppText
                   className={`text-center text-xs font-bold ${
                     tab === item ? 'text-[#231A0E]' : 'text-[#8A7D6D]'
@@ -120,7 +127,7 @@ export function DetailScreen({
             <AppText className="font-mono text-[10px] font-bold uppercase tracking-[2px] text-[#C77932]">
               문화 팁
             </AppText>
-            <AppText className="mt-1 text-xs leading-5 text-[#231A0E]">{scenario.culturalNote}</AppText>
+            <AppText className="mt-1 text-xs leading-5 text-[#231A0E]">{displayedCulturalTip}</AppText>
           </View>
         </View>
       </ScrollView>

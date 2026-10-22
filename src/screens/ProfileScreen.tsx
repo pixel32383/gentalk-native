@@ -1,6 +1,6 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { Image } from 'expo-image';
-import { BookOpen, ChevronRight, Database, Info, Languages, LogIn, LogOut, ShieldCheck, User } from 'lucide-react-native';
+import { BookOpen, ChevronRight, Database, Info, Languages, LogIn, ShieldCheck, User } from 'lucide-react-native';
 import { COLORS } from '@/data/constants';
 import { AppText } from '@/components/gentalk/AppText';
 
@@ -14,7 +14,6 @@ export function ProfileScreen({
   onOpenPermissionSettings,
   onOpenDataManagement,
   onOpenAppInfo,
-  onLogout,
   onLogin,
   isGuest,
 }: {
@@ -27,7 +26,6 @@ export function ProfileScreen({
   onOpenPermissionSettings: () => void;
   onOpenDataManagement: () => void;
   onOpenAppInfo: () => void;
-  onLogout: () => void;
   onLogin: () => void;
   isGuest: boolean;
 }) {
@@ -38,9 +36,7 @@ export function ProfileScreen({
     { icon: Database, label: '데이터 관리', action: onOpenDataManagement },
     { icon: BookOpen, label: '피드백 보내기', action: onOpenFeedback },
     { icon: Info, label: '앱 정보', detail: 'GENTALK 1.0.0', action: onOpenAppInfo },
-    isGuest
-      ? { icon: LogIn, label: '로그인', action: onLogin }
-      : { icon: LogOut, label: '로그아웃', action: onLogout },
+    ...(isGuest ? [{ icon: LogIn, label: '로그인', action: onLogin }] : []),
   ];
 
   return (
@@ -56,8 +52,8 @@ export function ProfileScreen({
         <AppText className="mt-3 text-lg font-black text-[#231A0E]">{name}</AppText>
         <AppText className="mt-0.5 font-mono text-xs text-[#8A7D6D]">{email}</AppText>
         {isGuest ? (
-          <View className="mt-2 rounded-full bg-[#F3EBDD] px-3 py-1.5">
-            <AppText className="text-xs font-black text-[#914523]">게스트 모드 · 로그인하면 학습 기록을 동기화할 수 있어요</AppText>
+          <View className="mt-2 self-stretch rounded-xl bg-[#F3EBDD] px-3 py-2">
+            <AppText className="text-center text-xs font-black leading-5 text-[#914523]">게스트 모드 · 로그인하면 학습 기록을 동기화할 수 있어요</AppText>
           </View>
         ) : null}
       </View>

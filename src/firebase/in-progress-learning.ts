@@ -2,8 +2,9 @@ import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, s
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { LearningProgress } from '@/types/learning';
 import { db } from './firebase';
-import { clearPendingSyncOperation, getPendingDeletedIds, queuePendingSyncOperation } from '@/services/pending-sync';
+import { clearPendingSyncOperation, getPendingSyncOperations, queuePendingSyncOperation } from '@/services/pending-sync';
 import { waitForRemoteWrite } from '@/services/remote-write';
+import { mergeCachedRecords, type PendingRecordChange } from '@/services/merge-cached-records';
 
 const COLLECTION_NAME = 'inProgressLearning';
 
@@ -35,11 +36,15 @@ export async function loadInProgressLearning(userId: string): Promise<LearningPr
   try {
     const progressQuery = query(collection(db, 'users', userId, COLLECTION_NAME), orderBy('updatedAt', 'desc'));
     const snapshot = await getDocs(progressQuery);
-    const pendingDeletedIds = await getPendingDeletedIds(userId, COLLECTION_NAME);
     const remote = snapshot.docs
       .map((item) => item.data().progress as LearningProgress)
-      .filter((item) => item?.id && item?.scenario && !pendingDeletedIds.has(item.id));
-    const merged = [...remote, ...cached.filter((item) => !remote.some((remoteItem) => remoteItem.id === item.id))]
+      .filter((item) => item?.id && item?.scenario);
+    const pendingChanges = (await getPendingSyncOperations(userId)).flatMap((item): PendingRecordChange<LearningProgress>[] => {
+      if (item.type === 'save-in-progress-learning') return [{ type: 'save', record: item.progress }];
+      if (item.type === 'delete-in-progress-learning') return [{ type: 'delete', id: item.progressId }];
+      return [];
+    });
+    const merged = mergeCachedRecords(remote, cached, pendingChanges)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     await cacheProgress(userId, merged);
     return merged;
@@ -53,14 +58,14 @@ export async function saveInProgressLearning(userId: string, progress: LearningP
   const savedProgress = withoutUndefined({ ...progress, updatedAt: new Date().toISOString() });
   const cached = await loadCachedProgress(userId);
   await cacheProgress(userId, [savedProgress, ...cached.filter((item) => item.id !== savedProgress.id)]);
-  await queuePendingSyncOperation({ userId, type: 'save-in-progress-learning', progress: savedProgress });
+  const operationId = await queuePendingSyncOperation({ userId, type: 'save-in-progress-learning', progress: savedProgress });
   try {
     await waitForRemoteWrite(setDoc(doc(db, 'users', userId, COLLECTION_NAME, savedProgress.id), {
       progress: savedProgress,
       updatedAt: savedProgress.updatedAt,
       serverUpdatedAt: serverTimestamp(),
     }));
-    await clearPendingSyncOperation({ userId, type: 'save-in-progress-learning', progress: savedProgress });
+    await clearPendingSyncOperation(operationId);
   } catch (error) {
     throw error;
   }
@@ -69,10 +74,10 @@ export async function saveInProgressLearning(userId: string, progress: LearningP
 export async function deleteInProgressLearning(userId: string, progressId: string): Promise<void> {
   const cached = await loadCachedProgress(userId);
   await cacheProgress(userId, cached.filter((item) => item.id !== progressId));
-  await queuePendingSyncOperation({ userId, type: 'delete-in-progress-learning', progressId });
+  const operationId = await queuePendingSyncOperation({ userId, type: 'delete-in-progress-learning', progressId });
   try {
     await waitForRemoteWrite(deleteDoc(doc(db, 'users', userId, COLLECTION_NAME, progressId)));
-    await clearPendingSyncOperation({ userId, type: 'delete-in-progress-learning', progressId });
+    await clearPendingSyncOperation(operationId);
   } catch (error) {
     throw error;
   }

@@ -11,12 +11,26 @@ export type PhraseItem = {
   translation: string;
 };
 
+/** 같은 문화 팁을 표시 언어별로 보관해 언어 전환 시 즉시 바꿔 보여줍니다. */
+export type CulturalTip = {
+  ko: string;
+  en: string;
+  ja: string;
+};
+
 export type DailySentence = PhraseItem & {
   id: string;
   languageCode: string;
   situation: string;
   savedAt: string;
+  /** 이전 버전에서 저장한 마지막 학습 완료 날짜입니다. */
+  completedOn?: string;
+  /** 월별 학습 완료 날짜입니다. 다시 학습을 누르면 해당 월의 값만 제거됩니다. */
+  completedMonths?: Record<string, string>;
 };
+
+/** 날짜별로 확정한 오늘의 문장 ID 목록입니다. */
+export type DailySentencePlans = Record<string, string[]>;
 
 export type DialogueLine = {
   speaker: 'A' | 'B';
@@ -53,7 +67,8 @@ export type Scenario = {
   phrases: PhraseItem[];
   dialogue: DialogueLine[];
   culturalNote: string;
-  culturalNotes?: string[];
+  culturalNotes?: Array<CulturalTip | string>;
+  culturalNoteIndex?: number;
   keywords: string[];
   emoji: string;
   openingStaffMessage?: string;

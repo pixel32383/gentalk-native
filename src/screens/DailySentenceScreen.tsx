@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import * as Speech from 'expo-speech';
 import { getSelectedSpeechVoice, getSpeechPitch, getSpeechRate } from '@/services/voice-settings';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Mic, Phone, Search, Settings2, Volume2, X } from 'lucide-react-native';
+import { getLocalMonthKey, isDailySentenceCompletedInMonth } from '@/services/daily-sentence-status';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Mic, Phone, RotateCcw, Search, Settings2, Volume2, X } from 'lucide-react-native';
 import { AppHeader } from '@/components/gentalk/AppHeader';
 import { COLORS } from '@/data/constants';
 import { AppText } from '@/components/gentalk/AppText';
 import { RoundButton } from '@/components/gentalk/RoundButton';
-import { getDisplayLocale, translateTemplate, translateText } from '@/data/translations';
+import { DeleteConfirmModal } from '@/components/modals/DeleteConfirmModal';
+import { getDisplayLocale, translateTemplate, translateText, useDisplayLanguage } from '@/data/translations';
 import type { DailySentence } from '@/types/learning';
 
 type SpeechRecognitionPackage = typeof import('expo-speech-recognition');
@@ -113,49 +115,84 @@ export function DailySentenceScreen({
   sentenceEnabled,
   sentenceCount,
   dailySentences,
+  todaySentences,
   onOpenSchedule,
   onToggleSentence,
   onChangeSentenceCount,
   onRemoveSentence,
+  onSetSentenceCompleted,
 }: {
   sentenceTime: string;
   sentenceEnabled: boolean;
   sentenceCount: number;
   dailySentences: DailySentence[];
+  todaySentences: DailySentence[];
   onOpenSchedule: () => void;
   onToggleSentence: (enabled: boolean) => void;
   onChangeSentenceCount: (count: number) => void;
   onRemoveSentence: (id: string) => void;
+  onSetSentenceCompleted: (id: string, month: string, completed: boolean) => void;
 }) {
+  useDisplayLanguage();
   const [activeSentenceId, setActiveSentenceId] = useState<string | null>(null);
   const [spokenSentences, setSpokenSentences] = useState<Record<string, string>>({});
   const activeSentenceIdRef = useRef<string | null>(null);
   const speechModule = speechRecognition?.ExpoSpeechRecognitionModule;
   const practiceSentences = dailySentences.map((sentence) => {
     const savedAt = new Date(sentence.savedAt);
-    return { id: sentence.id, month: savedAt.toISOString().slice(0, 7), date: new Intl.DateTimeFormat(getDisplayLocale(), { month: 'numeric', day: 'numeric' }).format(savedAt), sentence: sentence.phrase, translation: sentence.translation, languageCode: sentence.languageCode };
+    return { ...sentence, month: getLocalMonthKey(savedAt), date: new Intl.DateTimeFormat(getDisplayLocale(), { month: 'numeric', day: 'numeric' }).format(savedAt), sentence: sentence.phrase };
   });
-  const sentSentences = practiceSentences;
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const monthOptions = Array.from(new Set([currentMonth, ...sentSentences.map((item) => item.month)]))
-    .sort()
-    .map((value) => ({ value, label: new Intl.DateTimeFormat(getDisplayLocale(), { year: 'numeric', month: 'long' }).format(new Date(`${value}-01T00:00:00`)) }));
+  const currentMonth = getLocalMonthKey(new Date());
+  const oldestMonth = [currentMonth, ...practiceSentences.map((sentence) => sentence.month)].sort()[0];
+  const firstMonthDate = new Date(`${oldestMonth}-01T12:00:00`);
+  const currentMonthDate = new Date(`${currentMonth}-01T12:00:00`);
+  const monthCount = (currentMonthDate.getFullYear() - firstMonthDate.getFullYear()) * 12
+    + currentMonthDate.getMonth() - firstMonthDate.getMonth() + 1;
+  const monthOptions = Array.from({ length: monthCount }, (_, offset) => {
+    const date = new Date(firstMonthDate.getFullYear(), firstMonthDate.getMonth() + offset, 1);
+    return { value: getLocalMonthKey(date), label: new Intl.DateTimeFormat(getDisplayLocale(), { year: 'numeric', month: 'long' }).format(date) };
+  });
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [studyTab, setStudyTab] = useState<'learning' | 'completed'>('learning');
   const [searchQuery, setSearchQuery] = useState('');
+  const [pendingDeleteSentence, setPendingDeleteSentence] = useState<{ id: string; sentence: string } | null>(null);
   const selectedMonthIndex = monthOptions.findIndex((month) => month.value === selectedMonth);
   const selectedMonthLabel =
     monthOptions[selectedMonthIndex]?.label ?? monthOptions[monthOptions.length - 1].label;
+  const monthSentences = practiceSentences.filter((sentence) => sentence.month <= selectedMonth);
+  const learningCount = monthSentences.filter((sentence) => !isDailySentenceCompletedInMonth(sentence, selectedMonth)).length;
+  const completedCount = monthSentences.length - learningCount;
+  const todaySentenceIds = new Set(todaySentences.map((sentence) => sentence.id));
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase();
-  const visibleSentences = sentSentences.filter((item) =>
-    item.month === selectedMonth && (!normalizedSearchQuery || `${item.sentence} ${item.translation}`.toLocaleLowerCase().includes(normalizedSearchQuery)),
-  );
-  const groupedSentences = visibleSentences.reduce<Array<{ date: string; items: typeof visibleSentences }>>(
+  const visibleSentences = monthSentences.filter((item) =>
+    isDailySentenceCompletedInMonth(item, selectedMonth) === (studyTab === 'completed')
+    && (!normalizedSearchQuery || `${item.sentence} ${item.translation}`.toLocaleLowerCase().includes(normalizedSearchQuery)),
+  ).sort((left, right) => {
+    if (studyTab === 'completed') {
+      const leftCompletedOn = left.completedMonths?.[selectedMonth]
+        ?? (left.completedOn?.startsWith(`${selectedMonth}-`) ? left.completedOn : left.savedAt);
+      const rightCompletedOn = right.completedMonths?.[selectedMonth]
+        ?? (right.completedOn?.startsWith(`${selectedMonth}-`) ? right.completedOn : right.savedAt);
+      return rightCompletedOn.localeCompare(leftCompletedOn) || right.savedAt.localeCompare(left.savedAt);
+    }
+    return selectedMonth === currentMonth
+      ? Number(todaySentenceIds.has(right.id)) - Number(todaySentenceIds.has(left.id))
+      : 0;
+  });
+  const groupedSentences = visibleSentences.reduce<Array<{ date: string; isToday: boolean; items: typeof visibleSentences }>>(
     (groups, item) => {
-      const group = groups.find((candidate) => candidate.date === item.date);
+      const isToday = studyTab === 'learning' && selectedMonth === currentMonth && todaySentenceIds.has(item.id);
+      const completedOn = item.completedMonths?.[selectedMonth]
+        ?? (item.completedOn?.startsWith(`${selectedMonth}-`) ? item.completedOn : undefined);
+      const savedDate = studyTab === 'completed' && completedOn
+        ? new Intl.DateTimeFormat(getDisplayLocale(), { month: 'numeric', day: 'numeric' }).format(new Date(`${completedOn.slice(0, 10)}T12:00:00`))
+        : item.date;
+      const date = isToday ? '오늘 학습할 문장' : savedDate;
+      const group = groups.find((candidate) => candidate.date === date);
       if (group) group.items.push(item);
-      else groups.push({ date: item.date, items: [item] });
+      else groups.push({ date, isToday, items: [item] });
       return groups;
     },
     [],
@@ -182,7 +219,7 @@ export function DailySentenceScreen({
       if (event.error === 'aborted') return;
       activeSentenceIdRef.current = null;
       setActiveSentenceId(null);
-      Alert.alert('음성 인식 오류', event.message || '음성을 인식하지 못했습니다. 다시 시도해주세요.');
+      Alert.alert(translateText('음성 인식 오류'), event.message || translateText('음성을 인식하지 못했습니다. 다시 시도해주세요.'));
     });
 
     return () => {
@@ -203,23 +240,23 @@ export function DailySentenceScreen({
     await Speech.stop();
 
     if (!speechModule) {
-      Alert.alert('새 앱 설치가 필요합니다', '말하기 기능을 사용하려면 새 개발 APK를 설치해주세요.');
+      Alert.alert(translateText('새 앱 설치가 필요합니다'), translateText('말하기 기능을 사용하려면 새 개발 APK를 설치해주세요.'));
       return;
     }
 
     if (!speechModule.isRecognitionAvailable()) {
-      Alert.alert('음성 인식을 사용할 수 없습니다', '기기의 음성 인식 서비스를 확인해주세요.');
+      Alert.alert(translateText('음성 인식을 사용할 수 없습니다'), translateText('기기의 음성 인식 서비스를 확인해주세요.'));
       return;
     }
 
     const permission = await speechModule.requestPermissionsAsync();
     if (!permission.granted) {
       Alert.alert(
-        '마이크 권한이 필요합니다',
-        '문장을 말하려면 설정에서 마이크 권한을 허용해주세요.',
+        translateText('마이크 권한이 필요합니다'),
+        translateText('문장을 말하려면 설정에서 마이크 권한을 허용해주세요.'),
         [
-          { text: '나중에', style: 'cancel' },
-          { text: '설정 열기', onPress: () => void Linking.openSettings() },
+          { text: translateText('나중에'), style: 'cancel' },
+          { text: translateText('설정 열기'), onPress: () => void Linking.openSettings() },
         ],
       );
       return;
@@ -237,6 +274,10 @@ export function DailySentenceScreen({
       const voice = await getSelectedSpeechVoice(language);
       Speech.speak(word, { language, rate: getSpeechRate(), pitch: getSpeechPitch(), voice });
     });
+  }
+
+  function changeSentenceStudyStatus(sentence: DailySentence, month: string, completed: boolean) {
+    onSetSentenceCompleted(sentence.id, month, completed);
   }
 
   return (
@@ -286,27 +327,6 @@ export function DailySentenceScreen({
           </View>
         </View>
 
-        {dailySentences.length > 0 ? (
-          <View className="mx-5 mb-5 rounded-2xl border border-[#E9DDCE] bg-white px-5 py-4">
-            <View className="flex-row items-center justify-between">
-              <AppText className="text-sm font-black text-[#231A0E]">오늘 받을 문장</AppText>
-              <AppText className="text-xs font-bold text-[#914523]">{sentenceTime}</AppText>
-            </View>
-            <AppText className="mt-1 text-xs text-[#8A7D6D]">{translateTemplate('{time} 알림에서 문장 {count}개를 복습해보세요.', { time: sentenceTime, count: Math.min(sentenceCount, dailySentences.length) })}</AppText>
-            <View className="mt-3 gap-2">
-              {dailySentences.slice(0, sentenceCount).map((sentence, index) => (
-                <View key={sentence.id} className="flex-row items-start gap-2">
-                  <AppText className="text-xs font-black text-[#914523]">{index + 1}</AppText>
-                  <View className="min-w-0 flex-1">
-                    <AppText numberOfLines={1} className="text-sm font-bold text-[#231A0E]">{sentence.phrase}</AppText>
-                    <AppText numberOfLines={1} className="mt-0.5 text-xs text-[#8A7D6D]">{sentence.translation}</AppText>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
         <View className="mx-5 mb-5 flex-row items-center justify-between rounded-2xl border border-[#E9DDCE] bg-white px-3 py-3">
           <Pressable
             accessibilityRole="button"
@@ -354,36 +374,51 @@ export function DailySentenceScreen({
         </View>
 
         {dailySentences.length > 0 ? (
-          <View className="mx-5 mb-3 flex-row justify-end">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={translateText(isEditing ? '완료' : '편집')}
-              onPress={() => setIsEditing((current) => !current)}
-              className="rounded-lg bg-[#F3EBDD] px-3 py-2 active:opacity-70">
-              <AppText className="text-xs font-black text-[#914523]">{isEditing ? '완료' : '편집'}</AppText>
-            </Pressable>
-          </View>
+          <>
+            <View className="mx-5 mb-3 flex-row items-center justify-between">
+              <View className="flex-row gap-2">
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: studyTab === 'learning' }}
+                  onPress={() => setStudyTab('learning')}
+                  className={`rounded-lg px-3 py-2 ${studyTab === 'learning' ? 'bg-[#914523]' : 'bg-[#F3EBDD]'}`}>
+                  <AppText className={`text-xs font-black ${studyTab === 'learning' ? 'text-white' : 'text-[#6B5843]'}`}>{translateTemplate('학습 중 {count}', { count: learningCount })}</AppText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: studyTab === 'completed' }}
+                  onPress={() => setStudyTab('completed')}
+                  className={`rounded-lg px-3 py-2 ${studyTab === 'completed' ? 'bg-[#255F5A]' : 'bg-[#F3EBDD]'}`}>
+                  <AppText className={`text-xs font-black ${studyTab === 'completed' ? 'text-white' : 'text-[#6B5843]'}`}>{translateTemplate('학습 완료 {count}', { count: completedCount })}</AppText>
+                </Pressable>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={translateText(isEditing ? '완료' : '편집')}
+                onPress={() => setIsEditing((current) => !current)}
+                className="rounded-lg bg-[#F3EBDD] px-3 py-2 active:opacity-70">
+                <AppText className="text-xs font-black text-[#914523]">{isEditing ? '완료' : '편집'}</AppText>
+              </Pressable>
+            </View>
+          </>
         ) : null}
 
         {visibleSentences.length > 0 ? (
           <View className="mx-5 gap-3">
             {groupedSentences.map((group) => (
               <View key={group.date} className="rounded-2xl border border-[#E9DDCE] bg-white px-5 py-4">
-                <AppText className="text-sm font-black text-[#914523]">{group.date}</AppText>
+                <AppText className={`text-sm font-black ${group.isToday ? 'text-[#B42318]' : 'text-[#914523]'}`}>{group.date}</AppText>
                 <View className="mt-3 gap-4">
                   {group.items.map((item, index) => (
                     <View key={item.id} className={index > 0 ? 'border-t border-[#F0E7DB] pt-4' : ''}>
-                      <View className="flex-row items-start gap-4">
-                        <View className="min-w-0 flex-1">
-                          <AppText className="text-base font-black leading-6 text-[#231A0E]">{item.sentence}</AppText>
-                          <AppText className="mt-1 text-sm leading-5 text-[#8A7D6D]">{item.translation}</AppText>
-                        </View>
-                        <View className="gap-2">
-                          <Pressable accessibilityRole="button" onPress={() => { const language = { ja: 'ja-JP', ko: 'ko-KR', zh: 'zh-CN', ru: 'ru-RU', ar: 'ar-SA', fr: 'fr-FR', es: 'es-ES', de: 'de-DE' }[item.languageCode] ?? 'en-US'; void Speech.stop().finally(async () => Speech.speak(item.sentence, { language, rate: getSpeechRate(), pitch: getSpeechPitch(), voice: await getSelectedSpeechVoice(language) })); }} className="min-w-[70px] flex-row items-center justify-center gap-1.5 rounded-xl border border-[#DED0BA] bg-[#F3EBDD] px-3 py-2.5 active:opacity-70"><Volume2 size={15} color="#6B5843" /><AppText className="text-xs font-black text-[#6B5843]">듣기</AppText></Pressable>
-                          <Pressable accessibilityRole="button" accessibilityLabel={activeSentenceId === item.id ? '말하기 중지' : '문장 말하기'} onPress={() => void toggleSentenceSpeaking(item)} className={`min-w-[70px] flex-row items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 active:opacity-70 ${activeSentenceId === item.id ? 'bg-[#255F5A]' : 'bg-[#914523]'}`}><Mic size={15} color="#FFFFFF" /><AppText className="text-xs font-black text-white">{activeSentenceId === item.id ? '듣는 중' : '말하기'}</AppText></Pressable>
-                          {isEditing ? <Pressable accessibilityRole="button" accessibilityLabel={translateText('삭제')} onPress={() => Alert.alert(translateText('오늘의 문장 삭제'), translateTemplate('{sentence} 문장을 삭제할까요?', { sentence: item.sentence }), [{ text: translateText('취소'), style: 'cancel' }, { text: translateText('삭제'), style: 'destructive', onPress: () => onRemoveSentence(item.id) }])} className="min-w-[70px] flex-row items-center justify-center gap-1.5 rounded-xl bg-red-50 px-3 py-2.5 active:opacity-70"><X size={15} color="#DC2626" /><AppText className="text-xs font-black text-red-600">삭제</AppText></Pressable> : null}
-                        </View>
+                      <AppText className="text-base font-black leading-6 text-[#231A0E]">{item.sentence}</AppText>
+                      <AppText className="mt-1 text-sm leading-5 text-[#8A7D6D]">{item.translation}</AppText>
+                      <View className="mt-3 flex-row flex-wrap items-center gap-2">
+                        <Pressable accessibilityRole="button" accessibilityLabel={translateText(studyTab === 'learning' ? '학습 완료' : '다시 학습')} hitSlop={4} onPress={() => changeSentenceStudyStatus(item, selectedMonth, studyTab === 'learning')} className="flex-row items-center justify-center gap-1 rounded-xl border border-[#A9DDC8] bg-[#F0F8F5] px-3 py-2.5 active:opacity-70">{studyTab === 'learning' ? <Check size={15} color="#187560" /> : <RotateCcw size={15} color="#187560" />}<AppText numberOfLines={1} className="text-xs font-black text-[#187560]">{studyTab === 'learning' ? '학습 완료' : '다시 학습'}</AppText></Pressable>
+                        <Pressable accessibilityRole="button" hitSlop={4} onPress={() => { const language = getSpeechLanguage(item.languageCode); void Speech.stop().finally(async () => Speech.speak(item.sentence, { language, rate: getSpeechRate(), pitch: getSpeechPitch(), voice: await getSelectedSpeechVoice(language) })); }} className="flex-row items-center justify-center gap-1 rounded-xl border border-[#DED0BA] bg-[#F3EBDD] px-3 py-2.5 active:opacity-70"><Volume2 size={15} color="#6B5843" /><AppText numberOfLines={1} className="text-xs font-black text-[#6B5843]">듣기</AppText></Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel={activeSentenceId === item.id ? '말하기 중지' : '문장 말하기'} hitSlop={4} onPress={() => void toggleSentenceSpeaking(item)} className={`flex-row items-center justify-center gap-1 rounded-xl px-3 py-2.5 active:opacity-70 ${activeSentenceId === item.id ? 'bg-[#255F5A]' : 'bg-[#914523]'}`}><Mic size={15} color="#FFFFFF" /><AppText numberOfLines={1} className="text-xs font-black text-white">{activeSentenceId === item.id ? '듣는 중' : '말하기'}</AppText></Pressable>
                       </View>
+                      {isEditing ? <Pressable accessibilityRole="button" accessibilityLabel={translateText('삭제')} onPress={() => setPendingDeleteSentence({ id: item.id, sentence: item.sentence })} className="mt-2 self-end flex-row items-center justify-center gap-1.5 rounded-xl bg-red-50 px-3 py-2.5 active:opacity-70"><X size={15} color="#DC2626" /><AppText className="text-xs font-black text-red-600">삭제</AppText></Pressable> : null}
                       {spokenSentences[item.id] ? (() => {
                         const result = getSentenceMatch(item.sentence, spokenSentences[item.id]);
                         const wordFeedback = ['en', 'ja'].includes(item.languageCode)
@@ -398,7 +433,7 @@ export function DailySentenceScreen({
                           <View className={`mt-3 rounded-xl border px-3 py-2.5 ${colors.box}`}>
                             <View className="flex-row items-center justify-between gap-3">
                               <AppText className={`text-[11px] font-black ${colors.label}`}>{result.label}</AppText>
-                              <AppText className={`text-[11px] font-black ${colors.label}`}>일치도 {result.score}%</AppText>
+                              <AppText className={`text-[11px] font-black ${colors.label}`}>{translateTemplate('일치도 {score}%', { score: result.score })}</AppText>
                             </View>
                             <AppText className={`mt-1 text-xs leading-5 ${colors.body}`}>{result.description}</AppText>
                             <AppText className={`mt-2 text-[11px] font-black ${colors.label}`}>내가 말한 문장</AppText>
@@ -439,11 +474,22 @@ export function DailySentenceScreen({
           <View className="mx-5 items-center rounded-2xl border border-[#E9DDCE] bg-white px-8 py-12">
             <CalendarDays size={32} color="#C7B9A7" />
             <AppText className="mt-3 text-sm font-black text-[#231A0E]">
-              {searchQuery.trim() ? '검색 결과가 없습니다.' : '이 달에 보낸 문장이 없습니다.'}
+              {searchQuery.trim() ? '검색 결과가 없습니다.' : studyTab === 'learning' ? '이 달에 학습 중인 문장이 없습니다.' : '이 달에 학습 완료한 문장이 없습니다.'}
             </AppText>
           </View>
         )}
       </ScrollView>
+
+      <DeleteConfirmModal
+        visible={pendingDeleteSentence !== null}
+        title="오늘의 문장 삭제"
+        description={pendingDeleteSentence ? translateTemplate('{sentence} 문장을 삭제할까요?', { sentence: pendingDeleteSentence.sentence }) : ''}
+        onClose={() => setPendingDeleteSentence(null)}
+        onConfirm={() => {
+          if (pendingDeleteSentence) onRemoveSentence(pendingDeleteSentence.id);
+          setPendingDeleteSentence(null);
+        }}
+      />
 
       <Modal
         visible={showMonthPicker}

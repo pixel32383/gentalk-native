@@ -1,15 +1,29 @@
+import { useRef } from 'react';
 import { Modal, Pressable, View } from 'react-native';
 import { CheckCircle2, Info, X } from 'lucide-react-native';
 import { AppText } from '@/components/gentalk/AppText';
 import { COLORS } from '@/data/constants';
 
-export function AppInfoModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export function AppInfoModal({ visible, onClose, onOpenDeveloperMode }: { visible: boolean; onClose: () => void; onOpenDeveloperMode: () => void }) {
+  const infoTapCountRef = useRef(0);
+  const infoTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleInfoPress = () => {
+    infoTapCountRef.current += 1;
+    if (infoTapTimerRef.current) clearTimeout(infoTapTimerRef.current);
+    infoTapTimerRef.current = setTimeout(() => { infoTapCountRef.current = 0; }, 1200);
+    if (infoTapCountRef.current < 5) return;
+    infoTapCountRef.current = 0;
+    if (infoTapTimerRef.current) clearTimeout(infoTapTimerRef.current);
+    onOpenDeveloperMode();
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable onPress={onClose} className="flex-1 items-center justify-center bg-black/40 px-6">
         <Pressable onPress={(event) => event.stopPropagation()} className="w-full max-w-[420px] rounded-[28px] border border-[#E9DDCE] bg-[#FBF8F1] p-6">
           <View className="flex-row items-center justify-between">
-            <View className="h-12 w-12 items-center justify-center rounded-full bg-[#E7F2EF]"><Info size={23} color="#255F5A" /></View>
+            <Pressable accessibilityRole="button" accessibilityLabel="개발자 모드 열기" onPress={handleInfoPress} className="h-12 w-12 items-center justify-center rounded-full bg-[#E7F2EF]"><Info size={23} color="#255F5A" /></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="앱 정보 닫기" onPress={onClose} className="rounded-full p-2 active:bg-[#F2E8D9]"><X size={19} color={COLORS.muted} /></Pressable>
           </View>
           <AppText className="mt-5 text-2xl font-black text-[#231A0E]">GENTALK</AppText>

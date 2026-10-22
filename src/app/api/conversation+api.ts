@@ -4,15 +4,40 @@ type ConversationMessage = {
 };
 
 import { apiJson, corsHeaders, enforceAiRateLimit } from '@/services/server/ai-rate-limit';
+import { buildConversationInstructions, resolveConversationCompletion } from '@/services/server/conversation-rules';
+import { getKnownLearnerTranslation, isSuspiciousLearnerTranslation, normalizeConversationText } from '@/services/conversation-translation';
+
+type ConversationReply = {
+  staffMessage?: string;
+  translation?: string;
+  userTranslation?: string;
+  translatedMessageSource?: string;
+  isComplete?: boolean;
+  isRelevant?: boolean;
+  goalsMet?: boolean;
+  hint?: string;
+  exampleReply?: string;
+  examplePronunciation?: string;
+};
+
+/** 배울 언어와 다른 문자 체계가 Staff 문장에 섞였는지 확인합니다. */
+function isTargetLanguageReply(text: string, learningLanguage: string) {
+  const nonLatinScripts = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af\u3040-\u30ff\u3400-\u9fff\u0400-\u04ff\u0600-\u06ff]/;
+  if (['en', 'fr', 'es', 'de'].includes(learningLanguage)) return !nonLatinScripts.test(text);
+  if (learningLanguage === 'ko') return !/[\u3040-\u30ff\u3400-\u9fff\u0400-\u04ff\u0600-\u06ff]/.test(text);
+  if (learningLanguage === 'ja') return !/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff]/.test(text);
+  if (learningLanguage === 'ru') return !/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af\u3040-\u30ff\u3400-\u9fff\u0600-\u06ff]/.test(text);
+  if (learningLanguage === 'ar') return !/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af\u3040-\u30ff\u3400-\u9fff\u0400-\u04ff]/.test(text);
+  return true;
+}
+
+function parseConversationReply(data: { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> }) {
+  const outputText = data.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text;
+  return outputText ? JSON.parse(outputText) as ConversationReply : undefined;
+}
 
 export function OPTIONS() {
   return new Response(null, { headers: corsHeaders });
-}
-
-function pronunciationGuideRule(nativeLanguage: string) {
-  if (nativeLanguage === 'ko') return 'The learner native language is Korean. examplePronunciation MUST be written in Hangul only. It must not contain Japanese characters or the original English/Japanese sentence.';
-  if (nativeLanguage === 'ja') return 'The learner native language is Japanese. examplePronunciation MUST be written in Japanese kana only. It must not contain Hangul or the original English sentence.';
-  return 'The learner native language is English. examplePronunciation MUST use common Latin-letter romanization only.';
 }
 
 export async function POST(request: Request) {
@@ -34,12 +59,15 @@ export async function POST(request: Request) {
     const rateLimitResponse = await enforceAiRateLimit(request, 'conversation');
     if (rateLimitResponse) return rateLimitResponse;
 
-    const response = await fetch('https://api.openai.com/v1/responses', {
+    const learnerReplyCount = messages.filter((message) => message.speaker === 'YOU').length;
+    const latestLearnerMessage = messages.filter((message) => message.speaker === 'YOU').at(-1)?.text ?? '';
+
+    const requestConversationReply = (languageCorrection?: string) => fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL ?? 'gpt-4.1-mini',
-        instructions: `You are the assigned staff member in a language-learning roleplay. First classify the learner latest message before writing a reply. Set isRelevant=true only if that message directly advances the exact situation or answers the staff question. Set isRelevant=false for unrelated subjects, personal small talk, random statements, and topic changes. Example: in a cafe-ordering roleplay, "I play soccer every weekend" is false. If false, staffMessage must be a natural in-character question that redirects to ordering, and hint must be non-empty. Always provide one natural exampleReply the learner could say next. staffMessage and exampleReply must be written only in the requested learningLanguage. translation must be a complete, natural translation of staffMessage in the requested nativeLanguage. userTranslation must be a complete, natural translation of the learner's latest message in the requested nativeLanguage. examplePronunciation represents the sound of exampleReply, never its meaning. ${pronunciationGuideRule(nativeLanguage!)} Do not use IPA. Never copy the learning-language sentence into translation or userTranslation, and never write either translation in Japanese unless nativeLanguage is "ja". In particular, when learningLanguage is "ja" and nativeLanguage is "ko", staffMessage must be natural Japanese and both translations must be natural Korean. Do not give meta commentary in staffMessage. Set isComplete=true whenever the exchange has naturally reached a clear ending, even if every planned detail was not stated. Ending signals include the staff confirming the request or information, saying the user is all set, thanking the learner, wishing them a good day, or inviting them to return. For example, "That's great, thank you for the information." is a completed conversation and must have isComplete=true.`,
+        instructions: `${buildConversationInstructions({ nativeLanguage: nativeLanguage!, learningLanguage: learningLanguage!, learnerReplyCount, vocabulary: vocabulary ?? [] })}${languageCorrection ?? ''}`,
         input: JSON.stringify({
           situation,
           learningLanguage,
@@ -47,6 +75,7 @@ export async function POST(request: Request) {
           vocabulary,
           staffRole,
           conversationGoal,
+          latestLearnerMessage,
           conversation: messages.map((message) => `${message.speaker}: ${message.text}`),
           task: 'Write the next natural staff reply only.',
         }),
@@ -58,21 +87,58 @@ export async function POST(request: Request) {
             schema: {
               type: 'object',
               additionalProperties: false,
-              required: ['staffMessage', 'translation', 'userTranslation', 'isComplete', 'isRelevant', 'hint', 'exampleReply', 'examplePronunciation'],
-              properties: { staffMessage: { type: 'string' }, translation: { type: 'string' }, userTranslation: { type: 'string' }, isComplete: { type: 'boolean' }, isRelevant: { type: 'boolean' }, hint: { type: 'string' }, exampleReply: { type: 'string' }, examplePronunciation: { type: 'string' } },
+              required: ['staffMessage', 'translation', 'userTranslation', 'translatedMessageSource', 'isComplete', 'isRelevant', 'goalsMet', 'hint', 'exampleReply', 'examplePronunciation'],
+              properties: { staffMessage: { type: 'string' }, translation: { type: 'string' }, userTranslation: { type: 'string' }, translatedMessageSource: { type: 'string' }, isComplete: { type: 'boolean' }, isRelevant: { type: 'boolean' }, goalsMet: { type: 'boolean' }, hint: { type: 'string' }, exampleReply: { type: 'string' }, examplePronunciation: { type: 'string' } },
             },
           },
         },
       }),
     });
+
+    let response = await requestConversationReply();
     if (!response.ok) return apiJson({ error: 'AI conversation failed.' }, 502);
 
-    const data = await response.json() as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
-    const outputText = data.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text;
-    const result = outputText ? JSON.parse(outputText) as { staffMessage?: string; translation?: string; userTranslation?: string; isComplete?: boolean; isRelevant?: boolean; hint?: string; exampleReply?: string; examplePronunciation?: string } : undefined;
-    if (!result?.staffMessage || !result.translation || !result.userTranslation || typeof result.isComplete !== 'boolean' || typeof result.isRelevant !== 'boolean' || typeof result.hint !== 'string' || typeof result.exampleReply !== 'string' || typeof result.examplePronunciation !== 'string') throw new Error('Missing AI reply');
-    const hasNaturalClosing = /\b(thank(?:s| you)|all set|have a (?:great|good|nice)|enjoy|take care|see you|goodbye|bye)\b|감사합니다|고맙습니다|좋은 하루|안녕히|ありがとうございました|どうもありがとう|お気をつけて/i.test(result.staffMessage);
-    const isComplete = result.isComplete || (result.isRelevant && hasNaturalClosing);
+    let result = parseConversationReply(await response.json() as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> });
+    if (result?.staffMessage && result.exampleReply && (!isTargetLanguageReply(result.staffMessage, learningLanguage!) || !isTargetLanguageReply(result.exampleReply, learningLanguage!))) {
+      response = await requestConversationReply(` Your previous answer used the wrong language. Retry now: staffMessage and exampleReply must contain only ${learningLanguage} content, with no Korean or other non-${learningLanguage} scripts.`);
+      if (!response.ok) return apiJson({ error: 'AI conversation language retry failed.' }, 502);
+      result = parseConversationReply(await response.json() as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> });
+    }
+    if (!result?.staffMessage || !result.translation || !result.userTranslation || typeof result.isComplete !== 'boolean' || typeof result.isRelevant !== 'boolean' || typeof result.goalsMet !== 'boolean' || typeof result.hint !== 'string' || typeof result.exampleReply !== 'string' || typeof result.examplePronunciation !== 'string') throw new Error('Missing AI reply');
+    if (!isTargetLanguageReply(result.staffMessage, learningLanguage!) || !isTargetLanguageReply(result.exampleReply, learningLanguage!)) {
+      return apiJson({ error: 'AI가 배울 언어가 아닌 문장을 반환했습니다. 다시 시도해주세요.' }, 502);
+    }
+    const knownTranslation = getKnownLearnerTranslation(latestLearnerMessage, learningLanguage!, nativeLanguage!);
+    const hasUnreliableTranslation = (reply: ConversationReply) =>
+      normalizeConversationText(reply.translatedMessageSource ?? '') !== normalizeConversationText(latestLearnerMessage)
+      || isSuspiciousLearnerTranslation(latestLearnerMessage, reply.userTranslation ?? '', reply.staffMessage ?? '', reply.translation ?? '');
+
+    if (knownTranslation) {
+      result.userTranslation = knownTranslation;
+    } else if (hasUnreliableTranslation(result)) {
+      // 드문 번역 혼동에만 한 번 재요청하고, 또 틀리면 잘못된 해석을 저장하지 않습니다.
+      try {
+        const retryResponse = await requestConversationReply(' Your previous userTranslation did not match latestLearnerMessage. Copy latestLearnerMessage exactly to translatedMessageSource and translate only that message, briefly, into userTranslation.');
+        if (retryResponse.ok) {
+          const retried = parseConversationReply(await retryResponse.json() as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> });
+          if (retried?.staffMessage && retried.translation && retried.userTranslation && retried.exampleReply
+            && isTargetLanguageReply(retried.staffMessage, learningLanguage!)
+            && isTargetLanguageReply(retried.exampleReply, learningLanguage!)
+            && !hasUnreliableTranslation(retried)) {
+            result.userTranslation = retried.userTranslation;
+            result.translatedMessageSource = retried.translatedMessageSource;
+          }
+        }
+      } catch { /* 기존 Staff 답변은 유지하고 잘못된 해석만 숨깁니다. */ }
+      if (hasUnreliableTranslation(result)) result.userTranslation = '';
+    }
+    const isComplete = resolveConversationCompletion({
+      learnerReplyCount,
+      modelSaysComplete: result.isComplete,
+      isRelevant: result.isRelevant,
+      goalsMet: result.goalsMet,
+      staffMessage: result.staffMessage,
+    });
     return apiJson({ staffMessage: result.staffMessage, translation: result.translation, userTranslation: result.userTranslation, isComplete, isRelevant: result.isRelevant, hint: result.hint, exampleReply: result.exampleReply, examplePronunciation: result.examplePronunciation });
   } catch (error) {
     console.error('Conversation API error:', error);

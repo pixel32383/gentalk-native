@@ -28,7 +28,9 @@ async function deleteFeedbackDocuments(userId: string) {
   }
 }
 
-/** Removes every user-owned Firestore document and device cache before Auth is deleted. */
+/** Removes client-deletable account data before Auth is deleted.
+ * The immutable apiUsage quota documents require a privileged server-side cleanup.
+ */
 export async function deleteUserData(userId: string): Promise<void> {
   await Promise.all([
     ...USER_SUBCOLLECTIONS.map((name) => deleteCollectionDocuments(['users', userId, name])),
@@ -42,6 +44,7 @@ export async function deleteUserData(userId: string): Promise<void> {
     `@gentalk/learning-records/${userId}`,
     `@gentalk/in-progress-learning/${userId}`,
     `@gentalk/daily-sentences/${userId}`,
+    `@gentalk/daily-sentence-plans/${userId}`,
     `@gentalk/daily-sentence-settings/${userId}`,
     `@gentalk/voice-settings/${userId}`,
     `@gentalk/voice-mode/${userId}`,

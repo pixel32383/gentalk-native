@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressa
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageSquare, Send, X } from 'lucide-react-native';
 import { AppText } from '@/components/gentalk/AppText';
-import { translateText } from '@/data/translations';
+import { translateTemplate, translateText, useDisplayLanguage } from '@/data/translations';
 import { modalStyles } from '@/components/modals/modal-styles';
 
 export function FeedbackModal({
@@ -15,6 +15,7 @@ export function FeedbackModal({
   onClose: () => void;
   onSubmit: (content: string) => Promise<void>;
 }) {
+  useDisplayLanguage();
   const insets = useSafeAreaInsets();
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -78,7 +79,7 @@ export function FeedbackModal({
               </View>
 
               <View style={styles.infoBox}>
-                <AppText style={styles.infoText}>기기: {Platform.OS === 'android' ? 'Android 기기' : 'iOS 기기'}</AppText>
+                <AppText style={styles.infoText}>{translateTemplate('기기: {device}', { device: translateText(Platform.OS === 'android' ? 'Android 기기' : 'iOS 기기') })}</AppText>
                 <AppText style={styles.infoText}>OS: {Platform.OS} {Platform.Version}</AppText>
                 <AppText style={styles.infoText}>발생 화면: 프로필</AppText>
               </View>

@@ -1,6 +1,35 @@
 import { useSyncExternalStore } from 'react';
 import type { DisplayLanguage } from '@/types/language';
 
+const PROFILE_AND_DAILY_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<string, string>> = {
+  en: {
+    '권한 설정': 'Permissions', '게스트 모드 · 로그인하면 학습 기록을 동기화할 수 있어요': 'Guest mode · Sign in to sync your learning records.', '로그인': 'Sign in', '상황 학습': 'Situation learning',
+    '말하기와 알림에 필요한 권한을 관리하세요.': 'Manage the permissions needed for speaking practice and notifications.', '마이크': 'Microphone', '알림': 'Notifications', '말하기 연습에 사용합니다.': 'Used for speaking practice.', '권한 설정이 필요합니다.': 'Permission setup is required.',
+    '미리 듣기': 'Preview', '미리 듣기 중지': 'Stop preview', '오늘의 문장 알림': 'Daily sentence notifications', '오늘의 문장 시간 설정': 'Set daily sentence time',
+    '학습 중 {count}': 'Learning {count}', '학습 완료 {count}': 'Completed {count}', '학습 완료': 'Complete', '다시 학습': 'Study again', '오늘 학습할 문장': 'Sentence to study today', '이 달에 학습 중인 문장이 없습니다.': 'No sentences in progress this month.', '이 달에 학습 완료한 문장이 없습니다.': 'No completed sentences this month.',
+    '재생 중': 'Playing', '다시 말해보세요': 'Try saying it again', '문장을 보며 천천히 한 번 더 말해보세요.': 'Look at the sentence and say it once more slowly.', '잘했어요!': 'Great job!', '문장을 거의 정확하게 말했어요.': 'You said the sentence almost perfectly.', '거의 다 왔어요': 'Almost there', '조금 더 천천히 또박또박 말해보세요.': 'Try saying it a little more slowly and clearly.',
+    '일치도 {score}%': 'Match {score}%', '내가 말한 문장': 'What I said', '빨간 단어를 누르면 정답 발음을 다시 들을 수 있어요.': 'Tap a red word to hear the correct pronunciation again.', '빠진 단어': 'Missing words', '말하기 중지': 'Stop speaking', '문장 말하기': 'Speak sentence',
+    '데이터 관리': 'Data management', '삭제할 항목을 선택해주세요': 'Choose what you would like to delete.', '오늘의 문장 전체 삭제': 'Delete all daily sentences', '완료한 학습과 이어서 학습할 내용을 삭제합니다.': 'Deletes completed lessons and saved in-progress learning.', '저장한 문장과 예약된 알림을 삭제합니다.': 'Deletes saved sentences and scheduled notifications.', '정말 삭제할까요?': 'Delete this data?', '완료한 학습 기록과 이어서 학습할 내용을 모두 삭제합니다. 오늘의 문장은 유지됩니다.': 'Deletes all completed and in-progress learning. Daily sentences are kept.', '저장한 오늘의 문장과 예약된 알림을 모두 삭제합니다.': 'Deletes all saved daily sentences and scheduled notifications.',
+    '버전 1.0.0': 'Version 1.0.0', '실생활에서 바로 쓸 수 있는 상황을 중심으로 단어를 익히고, AI와 대화하며 연습하는 언어 학습 앱입니다.': 'A language-learning app for learning useful words in real-life situations and practicing with AI conversations.', '상황별 단어와 짝맞추기 게임': 'Situation vocabulary and matching games', 'AI 회화와 맞춤형 피드백': 'AI conversations and personalized feedback', '오늘의 문장 복습 알림': 'Daily sentence review notifications',
+    '이름을 입력해주세요.': 'Enter your name.', '게스트 모드': 'Guest mode', '로그인하면 학습 기록을 계정에 저장할 수 있습니다.': 'Sign in to save learning records to your account.', '탈퇴 처리 중...': 'Deleting account...', '탈퇴하기': 'Delete account', '기기: {device}': 'Device: {device}', 'Android 기기': 'Android device', 'iOS 기기': 'iOS device', '발생 화면: 프로필': 'Screen: Profile',
+    '음성 인식 오류': 'Speech recognition error', '음성을 인식하지 못했습니다. 다시 시도해주세요.': 'We could not recognize your speech. Please try again.', '새 앱 설치가 필요합니다': 'A new app installation is required', '말하기 기능을 사용하려면 새 개발 APK를 설치해주세요.': 'Install the newest development APK to use speaking practice.', '음성 인식을 사용할 수 없습니다': 'Speech recognition is unavailable', '기기의 음성 인식 서비스를 확인해주세요.': 'Check your device speech recognition service.', '마이크 권한이 필요합니다': 'Microphone permission is required', '문장을 말하려면 설정에서 마이크 권한을 허용해주세요.': 'Allow microphone access in Settings to speak the sentence.', '나중에': 'Later', '설정 열기': 'Open Settings',
+    '학습 기록을 어떻게 할까요?': 'How would you like to handle your learning records?', '이 Google 계정에 기존 학습 기록이 있어요.': 'This Google account already has learning records.', '게스트로 학습한 기록을 추가할지, 기존 기록 대신 사용할지 선택해주세요.': 'Choose whether to add your guest records or use them instead of the existing records.', '기존 기록 유지': 'Keep existing records', '기존 기록에 게스트 학습 기록을 추가해요.': 'Add the guest learning records to your existing records.', '게스트 기록으로 교체': 'Replace with guest records', '기존 학습 기록과 오늘의 문장을 지우고 교체해요.': 'Delete existing learning records and daily sentences, then replace them.', '프로필과 음성 설정은 그대로 유지됩니다.': 'Your profile and voice settings will stay the same.',
+  },
+  ja: {
+    '권한 설정': '権限設定', '게스트 모드 · 로그인하면 학습 기록을 동기화할 수 있어요': 'ゲストモード · ログインすると学習記録を同期できます。', '로그인': 'ログイン', '상황 학습': '場面学習',
+    '말하기와 알림에 필요한 권한을 관리하세요.': '発話練習と通知に必要な権限を管理します。', '마이크': 'マイク', '알림': '通知', '말하기 연습에 사용합니다.': '発話練習に使用します。', '권한 설정이 필요합니다.': '権限の設定が必要です。',
+    '미리 듣기': '試し聞き', '미리 듣기 중지': '試し聞きを停止', '오늘의 문장 알림': '今日のフレーズ通知', '오늘의 문장 시간 설정': '今日のフレーズの時間を設定',
+    '학습 중 {count}': '学習中 {count}', '학습 완료 {count}': '学習完了 {count}', '학습 완료': '学習完了', '다시 학습': 'もう一度学習', '오늘 학습할 문장': '今日学ぶ文', '이 달에 학습 중인 문장이 없습니다.': '今月の学習中の文はありません。', '이 달에 학습 완료한 문장이 없습니다.': '今月の学習完了した文はありません。',
+    '재생 중': '再生中', '다시 말해보세요': 'もう一度話してみましょう', '문장을 보며 천천히 한 번 더 말해보세요.': '文を見ながら、ゆっくりもう一度話してみましょう。', '잘했어요!': 'よくできました！', '문장을 거의 정확하게 말했어요.': '文をほぼ正確に話せました。', '거의 다 왔어요': 'もう少しです', '조금 더 천천히 또박또박 말해보세요.': 'もう少しゆっくり、はっきり話してみましょう。',
+    '일치도 {score}%': '一致度 {score}%', '내가 말한 문장': '私が話した文', '빨간 단어를 누르면 정답 발음을 다시 들을 수 있어요.': '赤い単語をタップすると、正しい発音をもう一度聞けます。', '빠진 단어': '抜けた単語', '말하기 중지': '発話を停止', '문장 말하기': '文を話す',
+    '데이터 관리': 'データ管理', '삭제할 항목을 선택해주세요': '削除する項目を選択してください。', '오늘의 문장 전체 삭제': '今日のフレーズをすべて削除', '완료한 학습과 이어서 학습할 내용을 삭제합니다.': '完了した学習と途中の学習内容を削除します。', '저장한 문장과 예약된 알림을 삭제합니다.': '保存した文と予約済み通知を削除します。', '정말 삭제할까요?': '削除しますか？', '완료한 학습 기록과 이어서 학습할 내용을 모두 삭제합니다. 오늘의 문장은 유지됩니다.': '完了した学習記録と途中の学習内容をすべて削除します。今日のフレーズは残ります。', '저장한 오늘의 문장과 예약된 알림을 모두 삭제합니다.': '保存した今日のフレーズと予約済み通知をすべて削除します。',
+    '버전 1.0.0': 'バージョン 1.0.0', '실생활에서 바로 쓸 수 있는 상황을 중심으로 단어를 익히고, AI와 대화하며 연습하는 언어 학습 앱입니다.': '実生活ですぐ使える場面の単語を学び、AIとの会話で練習する語学アプリです。', '상황별 단어와 짝맞추기 게임': '場面別単語とマッチングゲーム', 'AI 회화와 맞춤형 피드백': 'AI会話と個別フィードバック', '오늘의 문장 복습 알림': '今日のフレーズ復習通知',
+    '이름을 입력해주세요.': '名前を入力してください。', '게스트 모드': 'ゲストモード', '로그인하면 학습 기록을 계정에 저장할 수 있습니다.': 'ログインすると学習記録をアカウントに保存できます。', '탈퇴 처리 중...': '退会処理中…', '탈퇴하기': '退会する', '기기: {device}': '端末：{device}', 'Android 기기': 'Android端末', 'iOS 기기': 'iOS端末', '발생 화면: 프로필': '画面：プロフィール',
+    '음성 인식 오류': '音声認識エラー', '음성을 인식하지 못했습니다. 다시 시도해주세요.': '音声を認識できませんでした。もう一度お試しください。', '새 앱 설치가 필요합니다': '新しいアプリのインストールが必要です', '말하기 기능을 사용하려면 새 개발 APK를 설치해주세요.': '発話機能を使うには最新の開発APKをインストールしてください。', '음성 인식을 사용할 수 없습니다': '音声認識を利用できません', '기기의 음성 인식 서비스를 확인해주세요.': '端末の音声認識サービスを確認してください。', '마이크 권한이 필요합니다': 'マイク権限が必要です', '문장을 말하려면 설정에서 마이크 권한을 허용해주세요.': '文を話すには設定でマイク権限を許可してください。', '나중에': '後で', '설정 열기': '設定を開く',
+    '학습 기록을 어떻게 할까요?': '学習記録をどうしますか？', '이 Google 계정에 기존 학습 기록이 있어요.': 'この Google アカウントには既存の学習記録があります。', '게스트로 학습한 기록을 추가할지, 기존 기록 대신 사용할지 선택해주세요.': 'ゲストとして学習した記録を追加するか、既存の記録の代わりに使うかを選択してください。', '기존 기록 유지': '既存の記録を維持', '기존 기록에 게스트 학습 기록을 추가해요.': '既存の記録にゲストの学習記録を追加します。', '게스트 기록으로 교체': 'ゲスト記録に置き換える', '기존 학습 기록과 오늘의 문장을 지우고 교체해요.': '既存の学習記録と今日のフレーズを削除して置き換えます。', '프로필과 음성 설정은 그대로 유지됩니다.': 'プロフィールと音声設定はそのまま維持されます。',
+  },
+};
+
 export const UI_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<string, string>> = {
   en: {
     '홈': 'Home', '복습': 'Review', '오늘의 문장': 'Daily Sentence', '프로필': 'Profile',
@@ -14,11 +43,11 @@ export const UI_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<stri
     '내 언어': 'My language', '배울 언어': 'Learning language', '취소': 'Cancel', '저장': 'Save',
     '학습 단어 수': 'Word count', '학습할 단어 개수': 'Words to learn', '한 번에 학습할 단어의 개수를 설정하세요 (1-100)': 'Set the number of words to learn at once (1–100).',
     '오늘의 문장 시간': 'Daily sentence time', '문장을 받을 시간': 'Delivery time', '오늘의 문장을 받을 시간을 24시간 형식으로 입력하세요.': 'Enter the delivery time in 24-hour format.',
-    '프로필 설정': 'Profile settings', '언어·음성 설정': 'Language & voice settings', '마이크 권한 설정': 'Microphone permission', '알림 권한': 'Notification permission', '허용됨': 'Allowed', '현재 허용됨': 'Currently allowed', '설정 필요': 'Setup required', '데이터 관리': 'Data management', '앱 정보': 'App information', '듣기 속도': 'Listening speed', '목소리 음성': 'Voice', '목소리 1': 'Voice 1', '목소리 2': 'Voice 2', '느리게': 'Slow', '보통': 'Normal', '빠르게': 'Fast', '이미지 변경': 'Change photo', '이름': 'Name', '전화번호': 'Phone number', 'Google 계정': 'Google account',
+    '프로필 설정': 'Profile settings', '언어·음성 설정': 'Language & voice settings', '마이크 권한 설정': 'Microphone permission', '알림 권한': 'Notification permission', '허용됨': 'Allowed', '현재 허용됨': 'Currently allowed', '설정 필요': 'Setup required', '데이터 관리': 'Data management', '앱 정보': 'App information', '듣기 속도': 'Listening speed', '목소리 음성': 'Voice', '목소리 1': 'Voice 1', '목소리 2': 'Voice 2', '느리게': 'Slow', '보통': 'Normal', '빠르게': 'Fast', '이미지 변경': 'Change photo', '이름': 'Name', 'Google 계정': 'Google account',
     'Google 계정은 변경이 불가능합니다.': 'Google accounts cannot be changed.', '피드백 보내기': 'Send feedback', '로그아웃': 'Log out',
     '언어 학습을 시작하세요': 'Start learning a language', '실생활 상황으로 배우는 새로운 언어 학습 경험': 'A new language-learning experience for everyday situations.',
     'Google로 계속하기': 'Continue with Google', '또는': 'or', '게스트로 둘러보기': 'Continue as guest',
-    '계속 진행하면 서비스 약관 및 개인정보 보호정책에 동의하게 됩니다.': 'By continuing, you agree to the Terms of Service and Privacy Policy.',
+    '계속 진행하면 서비스 약관 및 개인정보 보호정책에 동의하게 됩니다.': 'By continuing, you agree to the Terms of Service and Privacy Policy.', '계속 진행하면': 'By continuing, you agree to the', '서비스 이용약관': 'Terms of Service', '및': 'and', '개인정보처리방침': 'Privacy Policy', '에 동의하게 됩니다.': '.',
     '단어 복습': 'Vocabulary review', '표현 말하기': 'Speaking expressions', '대화 흐름': 'Conversation flow',
     '저장된 상황의 핵심 단어를 빠르게 확인합니다.': 'Quickly review key words from saved situations.',
     '바로 입 밖으로 꺼내기 좋은 문장을 반복합니다.': 'Repeat useful sentences until they come naturally.',
@@ -64,6 +93,7 @@ export const UI_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<stri
     '손님': 'Guest', '직원': 'Staff', '투숙객': 'Guest',
     '프랑스어': 'French', '스페인어': 'Spanish', '독일어': 'German', '중국어': 'Chinese', '러시아어': 'Russian', '아랍어': 'Arabic',
     '매일 {time}에 문장 {count}개를 보내드려요.': 'We will send {count} sentence(s) every day at {time}.', '총 {count}개의 단어를 학습합니다': 'You will learn {count} words.', '게임 {current} / {total}': 'Game {current} / {total}',
+    ...PROFILE_AND_DAILY_TRANSLATIONS.en,
   },
   ja: {
     '홈': 'ホーム', '복습': '復習', '오늘의 문장': '今日のフレーズ', '프로필': 'プロフィール',
@@ -74,9 +104,9 @@ export const UI_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<stri
     '언어 설정': '言語設定', '표시 언어와 학습 언어를 선택하세요.': '表示言語と学習言語を選択してください。', '내 언어': '表示言語', '배울 언어': '学習言語', '취소': 'キャンセル', '저장': '保存',
     '학습 단어 수': '学習単語数', '학습할 단어 개수': '学習する単語数', '한 번에 학습할 단어의 개수를 설정하세요 (1-100)': '一度に学習する単語数を設定してください（1〜100）。',
     '오늘의 문장 시간': '今日のフレーズの時間', '문장을 받을 시간': '受信時刻', '문장을 받을 시간을 24시간 형식으로 입력하세요.': '24時間形式で受信時刻を入力してください。',
-    '프로필 설정': 'プロフィール設定', '언어·음성 설정': '言語・音声設定', '마이크 권한 설정': 'マイク権限設定', '알림 권한': '通知の許可', '허용됨': '許可済み', '현재 허용됨': '現在許可済み', '설정 필요': '設定が必要', '데이터 관리': 'データ管理', '앱 정보': 'アプリ情報', '듣기 속도': '聞く速さ', '목소리 음성': '声', '목소리 1': '音声 1', '목소리 2': '音声 2', '느리게': 'ゆっくり', '보통': '普通', '빠르게': '速く', '이미지 변경': '画像を変更', '이름': '名前', '전화번호': '電話番号', 'Google 계정': 'Google アカウント', 'Google 계정은 변경이 불가능합니다.': 'Google アカウントは変更できません。',
+    '프로필 설정': 'プロフィール設定', '언어·음성 설정': '言語・音声設定', '마이크 권한 설정': 'マイク権限設定', '알림 권한': '通知の許可', '허용됨': '許可済み', '현재 허용됨': '現在許可済み', '설정 필요': '設定が必要', '데이터 관리': 'データ管理', '앱 정보': 'アプリ情報', '듣기 속도': '聞く速さ', '목소리 음성': '声', '목소리 1': '音声 1', '목소리 2': '音声 2', '느리게': 'ゆっくり', '보통': '普通', '빠르게': '速く', '이미지 변경': '画像を変更', '이름': '名前', 'Google 계정': 'Google アカウント', 'Google 계정은 변경이 불가능합니다.': 'Google アカウントは変更できません。',
     '피드백 보내기': 'フィードバックを送る', '로그아웃': 'ログアウト', '언어 학습을 시작하세요': '言語学習を始めましょう', '실생활 상황으로 배우는 새로운 언어 학습 경험': '日常の場面で学ぶ新しい語学体験',
-    'Google로 계속하기': 'Google で続ける', '또는': 'または', '게스트로 둘러보기': 'ゲストとして続ける', '계속 진행하면 서비스 약관 및 개인정보 보호정책에 동의하게 됩니다.': '続行すると、利用規約とプライバシーポリシーに同意したことになります。',
+    'Google로 계속하기': 'Google で続ける', '또는': 'または', '게스트로 둘러보기': 'ゲストとして続ける', '계속 진행하면 서비스 약관 및 개인정보 보호정책에 동의하게 됩니다.': '続行すると、利用規約とプライバシーポリシーに同意したことになります。', '계속 진행하면': '続行すると、', '서비스 이용약관': '利用規約', '및': 'および', '개인정보처리방침': 'プライバシーポリシー', '에 동의하게 됩니다.': 'に同意したことになります。',
     '단어 복습': '単語の復習', '표현 말하기': '表現を話す', '대화 흐름': '会話の流れ', '저장된 상황의 핵심 단어를 빠르게 확인합니다.': '保存した場面の重要単語をすばやく確認します。', '바로 입 밖으로 꺼내기 좋은 문장을 반복합니다.': 'すぐ口に出せる文を繰り返します。', '역할별 대화를 보며 응答 순서를 익힙니다.': '役割別の会話で応答の順序を学びます。',
     '익숙해질 때까지 다시 보기': '慣れるまで繰り返す', '문화 팁': '文化のヒント', '처음부터': '最初から', '완료': '完了', '다음': '次へ', '영어': '英語', '한국어': '韓国語', '일본어': '日本語', '개': '件',
     '언어': '言語', '프로필로 이동': 'プロフィールを開く', '예) 호텔 체크인하는 상황': '例）ホテルでチェックインする場面',
@@ -118,6 +148,7 @@ export const UI_TRANSLATIONS: Record<Exclude<DisplayLanguage, 'ko'>, Record<stri
     '손님': 'お客様', '직원': 'スタッフ', '투숙객': '宿泊客',
     '프랑스어': 'フランス語', '스페인어': 'スペイン語', '독일어': 'ドイツ語', '중국어': '中国語', '러시아어': 'ロシア語', '아랍어': 'アラビア語',
     '매일 {time}에 문장 {count}개를 보내드려요.': '毎日{time}に{count}件の文をお届けします。', '총 {count}개의 단어를 학습합니다': '合計{count}語を学習します', '게임 {current} / {total}': 'ゲーム {current} / {total}',
+    ...PROFILE_AND_DAILY_TRANSLATIONS.ja,
   },
 };
 

@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import type { DailySentence, LearningProgress, Scenario } from '@/types/learning';
+import { deleteDoc, deleteField, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import type { DailySentence, DailySentencePlans, LearningProgress, Scenario } from '@/types/learning';
 import type { UserProfile } from '@/firebase/user-profile';
+import type { DailySentenceSettings } from '@/services/daily-sentence-settings';
+import type { VoiceSettings } from '@/services/voice-settings';
 import { db } from '@/firebase/firebase';
 import { waitForRemoteWrite } from '@/services/remote-write';
 
@@ -12,7 +14,10 @@ type PendingSyncInput =
   | { userId: string; type: 'delete-in-progress-learning'; progressId: string }
   | { userId: string; type: 'save-daily-sentence'; sentence: DailySentence }
   | { userId: string; type: 'delete-daily-sentence'; sentenceId: string }
-  | { userId: string; type: 'save-user-profile'; profile: UserProfile };
+  | { userId: string; type: 'save-user-profile'; profile: UserProfile }
+  | { userId: string; type: 'save-daily-sentence-plans'; plans: DailySentencePlans }
+  | { userId: string; type: 'save-daily-sentence-settings'; settings: DailySentenceSettings }
+  | { userId: string; type: 'save-voice-settings'; settings: VoiceSettings };
 
 type PendingSyncOperation = PendingSyncInput & { key: string; operationId: string };
 
@@ -35,6 +40,12 @@ function operationKey(operation: PendingSyncInput) {
       return `${operation.userId}:dailySentences:${operation.sentenceId}`;
     case 'save-user-profile':
       return `${operation.userId}:profile:profile`;
+    case 'save-daily-sentence-plans':
+      return `${operation.userId}:dailySentencePlans`;
+    case 'save-daily-sentence-settings':
+      return `${operation.userId}:dailySentenceSettings`;
+    case 'save-voice-settings':
+      return `${operation.userId}:voiceSettings`;
   }
 }
 
@@ -74,39 +85,22 @@ function updatePendingOperations(
 /** Keeps only the newest change for each document, so an offline save/delete cannot conflict. */
 export async function queuePendingSyncOperation(operation: PendingSyncInput) {
   const key = operationKey(operation);
+  const operationId = `${Date.now()}:${Math.random()}`;
   await updatePendingOperations((operations) => [
     ...operations.filter((item) => item.key !== key),
-    { ...operation, key, operationId: `${Date.now()}:${Math.random()}` } as PendingSyncOperation,
+    { ...operation, key, operationId } as PendingSyncOperation,
   ]);
+  return operationId;
 }
 
-export async function clearPendingSyncOperation(operation: PendingSyncInput) {
-  const key = operationKey(operation);
-  await updatePendingOperations((operations) => operations.filter((item) => item.key !== key));
+/** A completed older write must never remove a newer queued change to the same document. */
+export async function clearPendingSyncOperation(operationId: string) {
+  await updatePendingOperations((operations) => operations.filter((item) => item.operationId !== operationId));
 }
 
-export async function getPendingDeletedIds(userId: string, collection: 'learningRecords' | 'inProgressLearning' | 'dailySentences') {
+export async function getPendingSyncOperations(userId: string): Promise<PendingSyncInput[]> {
   await pendingMutationQueue;
-  const operations = await loadPendingOperations();
-  if (collection === 'learningRecords') {
-    return new Set(
-      operations
-        .filter((item): item is Extract<PendingSyncOperation, { type: 'delete-learning-record' }> => item.userId === userId && item.type === 'delete-learning-record')
-        .map((item) => item.recordId),
-    );
-  }
-  if (collection === 'inProgressLearning') {
-    return new Set(
-      operations
-        .filter((item): item is Extract<PendingSyncOperation, { type: 'delete-in-progress-learning' }> => item.userId === userId && item.type === 'delete-in-progress-learning')
-        .map((item) => item.progressId),
-    );
-  }
-  return new Set(
-    operations
-      .filter((item): item is Extract<PendingSyncOperation, { type: 'delete-daily-sentence' }> => item.userId === userId && item.type === 'delete-daily-sentence')
-      .map((item) => item.sentenceId),
-  );
+  return (await loadPendingOperations()).filter((item) => item.userId === userId);
 }
 
 async function syncOperation(operation: PendingSyncOperation) {
@@ -149,8 +143,26 @@ async function syncOperation(operation: PendingSyncOperation) {
       return;
     case 'save-user-profile':
       await waitForRemoteWrite(setDoc(doc(db, 'users', operation.userId), {
-        profile: operation.profile,
+        profile: { ...operation.profile, phone: deleteField() },
         profileUpdatedAt: serverTimestamp(),
+      }, { merge: true }));
+      return;
+    case 'save-daily-sentence-plans':
+      await waitForRemoteWrite(setDoc(doc(db, 'users', operation.userId), {
+        dailySentencePlans: operation.plans,
+        dailySentencePlansUpdatedAt: serverTimestamp(),
+      }, { merge: true }));
+      return;
+    case 'save-daily-sentence-settings':
+      await waitForRemoteWrite(setDoc(doc(db, 'users', operation.userId), {
+        dailySentenceSettings: operation.settings,
+        dailySentenceSettingsUpdatedAt: serverTimestamp(),
+      }, { merge: true }));
+      return;
+    case 'save-voice-settings':
+      await waitForRemoteWrite(setDoc(doc(db, 'users', operation.userId), {
+        voiceSettings: operation.settings,
+        voiceSettingsUpdatedAt: serverTimestamp(),
       }, { merge: true }));
   }
 }

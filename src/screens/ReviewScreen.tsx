@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, TextInput, View } from 'react-native';
 import { Search, X } from 'lucide-react-native';
 import { COLORS } from '@/data/constants';
 import { LANGUAGES } from '@/data/languages';
@@ -7,10 +7,12 @@ import { AppHeader } from '@/components/gentalk/AppHeader';
 import { AppText } from '@/components/gentalk/AppText';
 import { MiniScenarioRow } from '@/components/gentalk/MiniScenarioRow';
 import { RoundButton } from '@/components/gentalk/RoundButton';
+import { DeleteConfirmModal } from '@/components/modals/DeleteConfirmModal';
 import { translateTemplate, translateText, useDisplayLanguage } from '@/data/translations';
 import type { Scenario } from '@/types/learning';
 
 type LanguageFilter = 'all' | 'needs-correction' | string;
+type PendingDelete = { type: 'single'; scenario: Scenario } | { type: 'all' } | null;
 
 function hasCorrection(scenario: Scenario) {
   return Boolean(
@@ -24,6 +26,7 @@ export function ReviewScreen({ recentScenarios, onScenario, onRemoveRecentScenar
   const [search, setSearch] = useState('');
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>('all');
   const [isEditing, setIsEditing] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
   const availableLanguages = useMemo(
     () => LANGUAGES.filter((language) => recentScenarios.some((scenario) => scenario.langCode === language.code)),
     [recentScenarios],
@@ -32,14 +35,33 @@ export function ReviewScreen({ recentScenarios, onScenario, onRemoveRecentScenar
     const keyword = search.trim().toLocaleLowerCase();
     return recentScenarios.filter((scenario) => {
       const matchesLanguage = languageFilter === 'all'
-        || (languageFilter === 'needs-correction' ? hasCorrection(scenario) : scenario.langCode === languageFilter);
+        || (languageFilter === 'needs-correction' ? hasCorrection(scenario) && !scenario.feedbackReviewed : scenario.langCode === languageFilter);
       const searchableText = [scenario.situation, scenario.title, scenario.context].join(' ').toLocaleLowerCase();
       return matchesLanguage && (!keyword || searchableText.includes(keyword));
     });
   }, [languageFilter, recentScenarios, search]);
 
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === 'all') {
+      onRemoveAllRecentScenarios();
+      setIsEditing(false);
+    } else {
+      onRemoveRecentScenario(pendingDelete.scenario.id);
+    }
+    setPendingDelete(null);
+  }
+
+  const deleteTitle = pendingDelete?.type === 'all' ? '학습 기록 전체 삭제' : '학습 기록 삭제';
+  const deleteDescription = pendingDelete?.type === 'all'
+    ? '완료한 모든 학습 기록을 삭제할까요?'
+    : pendingDelete
+      ? translateTemplate('{situation} 학습 기록을 삭제할까요?', { situation: pendingDelete.scenario.situation })
+      : '';
+
   return (
-    <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 136 }}>
+    <>
+      <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 136 }}>
       <AppHeader title="복습" subtitle="익숙해질 때까지 다시 보기" />
       <View className="mx-5 mt-2 rounded-xl border border-[#DED0BA] bg-[#FBF6EC] px-3 py-2.5">
         <View className="flex-row items-center gap-2">
@@ -60,12 +82,21 @@ export function ReviewScreen({ recentScenarios, onScenario, onRemoveRecentScenar
         </ScrollView>
       ) : null}
 
-      <View className="mx-5 mb-3 mt-5 flex-row items-center justify-between"><AppText className="font-mono text-[11px] font-bold uppercase tracking-[2px] text-[#8A7D6D]">최근 본 상황</AppText>{recentScenarios.length > 0 ? <View className="flex-row gap-2">{isEditing ? <Pressable onPress={() => Alert.alert(translateText('학습 기록 전체 삭제'), translateText('완료한 모든 학습 기록을 삭제할까요?'), [{ text: translateText('취소'), style: 'cancel' }, { text: translateText('전체 삭제'), style: 'destructive', onPress: () => { onRemoveAllRecentScenarios(); setIsEditing(false); } }])} className="rounded-lg bg-red-50 px-3 py-2 active:opacity-70"><AppText className="text-xs font-black text-red-600">전체 삭제</AppText></Pressable> : null}<Pressable onPress={() => setIsEditing((current) => !current)} className="rounded-lg bg-[#F3EBDD] px-3 py-2 active:opacity-70"><AppText className="text-xs font-black text-[#914523]">{isEditing ? '완료' : '편집'}</AppText></Pressable></View> : null}</View>
+      <View className="mx-5 mb-3 mt-5 flex-row items-center justify-between"><AppText className="font-mono text-[11px] font-bold uppercase tracking-[2px] text-[#8A7D6D]">최근 본 상황</AppText>{recentScenarios.length > 0 ? <View className="flex-row gap-2">{isEditing ? <Pressable onPress={() => setPendingDelete({ type: 'all' })} className="rounded-lg bg-red-50 px-3 py-2 active:opacity-70"><AppText className="text-xs font-black text-red-600">전체 삭제</AppText></Pressable> : null}<Pressable onPress={() => setIsEditing((current) => !current)} className="rounded-lg bg-[#F3EBDD] px-3 py-2 active:opacity-70"><AppText className="text-xs font-black text-[#914523]">{isEditing ? '완료' : '편집'}</AppText></Pressable></View> : null}</View>
       <View className="mx-5 gap-2">
-        {filteredScenarios.map((scenario) => <View key={scenario.id} className="flex-row items-center gap-2"><MiniScenarioRow scenario={scenario} onPress={() => onScenario(scenario)} />{isEditing ? <RoundButton onPress={() => Alert.alert(translateText('학습 기록 삭제'), translateTemplate('{situation} 학습 기록을 삭제할까요?', { situation: scenario.situation }), [{ text: translateText('취소'), style: 'cancel' }, { text: translateText('삭제'), style: 'destructive', onPress: () => onRemoveRecentScenario(scenario.id) }])}><X size={17} color={COLORS.muted} /></RoundButton> : null}</View>)}
+        {filteredScenarios.map((scenario) => <View key={scenario.id} className="flex-row items-center gap-2"><MiniScenarioRow scenario={scenario} onPress={() => onScenario(scenario)} />{isEditing ? <RoundButton onPress={() => setPendingDelete({ type: 'single', scenario })}><X size={17} color={COLORS.muted} /></RoundButton> : null}</View>)}
         {recentScenarios.length === 0 ? <View className="rounded-xl border border-dashed border-[#E9DDCE] bg-[#F8F1E8] px-4 py-5"><AppText className="text-center text-sm text-[#8A7D6D]">최근 본 상황이 없습니다.</AppText></View> : null}
         {recentScenarios.length > 0 && filteredScenarios.length === 0 ? <View className="rounded-xl border border-dashed border-[#E9DDCE] bg-[#F8F1E8] px-4 py-5"><AppText className="text-center text-sm text-[#8A7D6D]">검색 결과가 없습니다.</AppText></View> : null}
       </View>
-    </ScrollView>
+      </ScrollView>
+      <DeleteConfirmModal
+        visible={pendingDelete !== null}
+        title={deleteTitle}
+        description={deleteDescription}
+        confirmLabel={pendingDelete?.type === 'all' ? '전체 삭제' : '삭제'}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+      />
+    </>
   );
 }

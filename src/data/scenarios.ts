@@ -42,6 +42,12 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     culturalNote: '미국 카페에서는 보통 Small, Medium, Large 같은 사이즈로 주문합니다.',
+    culturalNoteIndex: 0,
+    culturalNotes: [{
+      ko: '미국 카페에서는 보통 Small, Medium, Large 같은 사이즈로 주문합니다.',
+      en: 'At many U.S. cafés, drink sizes are usually ordered as Small, Medium, or Large.',
+      ja: 'アメリカのカフェでは、通常 Small、Medium、Large などのサイズで注文します。',
+    }],
   },
   {
     id: 'en-hotel',
@@ -91,6 +97,12 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     culturalNote: '호텔 체크인 시 신분증과 결제 카드가 필요할 수 있습니다.',
+    culturalNoteIndex: 0,
+    culturalNotes: [{
+      ko: '호텔 체크인 시 신분증과 결제 카드가 필요할 수 있습니다.',
+      en: 'You may need an ID and a payment card when checking in at a hotel.',
+      ja: 'ホテルのチェックインでは、身分証明書と支払い用カードが必要になる場合があります。',
+    }],
   },
   {
     id: 'en-restaurant',
@@ -133,5 +145,11 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     culturalNote: '인기 있는 레스토랑은 예약 시간을 지나면 테이블이 취소될 수 있습니다.',
+    culturalNoteIndex: 0,
+    culturalNotes: [{
+      ko: '인기 있는 레스토랑은 예약 시간을 지나면 테이블이 취소될 수 있습니다.',
+      en: 'At popular restaurants, your table may be released if you arrive late for your reservation.',
+      ja: '人気のレストランでは、予約時間に遅れるとテーブルがキャンセルされることがあります。',
+    }],
   },
 ];

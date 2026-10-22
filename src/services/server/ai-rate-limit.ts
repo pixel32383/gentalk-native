@@ -21,10 +21,17 @@ const LIMITS: Record<AiRequestKind | 'total' | 'minute', number> = {
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID ?? 'gentalk-595d2';
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
+// 개발 서버에서만 .env의 AI_RATE_LIMIT_ENABLED=false로 한도를 잠시 해제할 수 있습니다.
+// 배포 환경(NODE_ENV=production)에서는 이 값과 관계없이 항상 제한을 적용합니다.
+function isDevelopmentRateLimitDisabled(request: Request) {
+  return process.env.NODE_ENV !== 'production'
+    && (process.env.AI_RATE_LIMIT_ENABLED === 'false' || request.headers.get('x-gentalk-dev-rate-limit') === 'off');
+}
+
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Firebase-UID',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Firebase-UID, X-Gentalk-Dev-Rate-Limit',
 };
 
 export function apiJson(body: unknown, status = 200) {
@@ -148,6 +155,8 @@ async function reserveDaily(userId: string, token: string, kind: AiRequestKind) 
 
 /** Reserves an AI request before the OpenAI call. Fails closed when quota storage is unavailable. */
 export async function enforceAiRateLimit(request: Request, kind: AiRequestKind): Promise<Response | null> {
+  if (isDevelopmentRateLimitDisabled(request)) return null;
+
   const identity = getApiIdentity(request);
   if (!identity) return apiJson({ error: '로그인 정보를 확인하지 못했습니다. 다시 로그인해주세요.' }, 401);
 

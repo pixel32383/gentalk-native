@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
 import * as Speech from 'expo-speech';
 import { Globe, Languages, Volume2, X } from 'lucide-react-native';
@@ -46,6 +46,7 @@ export function LanguageSettingsModal({
   const [draftSpeechRate, setDraftSpeechRate] = useState(speechRate);
   const [draftSpeechVoiceMode, setDraftSpeechVoiceMode] = useState<SpeechVoiceMode>(speechVoiceMode);
   const [previewingMode, setPreviewingMode] = useState<SpeechVoiceMode | null>(null);
+  const previewRequestRef = useRef(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -56,37 +57,60 @@ export function LanguageSettingsModal({
   }, [learningLang, speechRate, speechVoiceMode, userLang, visible]);
 
   useEffect(() => () => {
-    void Speech.stop();
+    previewRequestRef.current += 1;
+    void Speech.stop().catch(() => {});
   }, []);
 
   const closeModal = () => {
+    previewRequestRef.current += 1;
     setPreviewingMode(null);
-    void Speech.stop();
+    void Speech.stop().catch(() => {});
     onClose();
+  };
+
+  const speakPreview = (text: string, language: string, rate: number, mode: SpeechVoiceMode, onFinish?: () => void) => {
+    const requestId = ++previewRequestRef.current;
+    void (async () => {
+      await Speech.stop();
+      const voice = await getSelectedSpeechVoice(language, mode);
+      if (previewRequestRef.current !== requestId) return;
+      const finish = () => {
+        if (previewRequestRef.current === requestId) onFinish?.();
+      };
+      Speech.speak(text, {
+        language,
+        rate,
+        pitch: getSpeechPitch(mode),
+        voice,
+        onDone: finish,
+        onStopped: finish,
+        onError: finish,
+      });
+    })().catch(() => {
+      if (previewRequestRef.current === requestId) onFinish?.();
+    });
   };
 
   const previewVoice = (mode: SpeechVoiceMode) => {
     if (previewingMode === mode) {
+      previewRequestRef.current += 1;
       setPreviewingMode(null);
-      void Speech.stop();
+      void Speech.stop().catch(() => {});
       return;
     }
 
     const speechLanguage = SPEECH_LANGUAGES[draftLearningLang] ?? 'en-US';
     const previewText = VOICE_PREVIEW_TEXT[draftLearningLang] ?? VOICE_PREVIEW_TEXT.en;
-    void Speech.stop().finally(async () => {
-      setPreviewingMode(mode);
-      const voice = await getSelectedSpeechVoice(speechLanguage, mode);
-      Speech.speak(previewText, {
-        language: speechLanguage,
-        rate: draftSpeechRate,
-        pitch: getSpeechPitch(mode),
-        voice,
-        onDone: () => setPreviewingMode((current) => (current === mode ? null : current)),
-        onStopped: () => setPreviewingMode((current) => (current === mode ? null : current)),
-        onError: () => setPreviewingMode((current) => (current === mode ? null : current)),
-      });
+    setPreviewingMode(mode);
+    speakPreview(previewText, speechLanguage, draftSpeechRate, mode, () => {
+      setPreviewingMode((current) => (current === mode ? null : current));
     });
+  };
+
+  const previewRate = (rate: number) => {
+    setDraftSpeechRate(rate);
+    setPreviewingMode(null);
+    speakPreview('listening speed', 'en-US', rate, draftSpeechVoiceMode);
   };
 
   const voiceOptions: { label: string; value: SpeechVoiceMode }[] = [
@@ -113,7 +137,7 @@ export function LanguageSettingsModal({
           <SettingLabel icon={<Volume2 size={14} color={COLORS.accent} />} label="듣기 속도" />
           <View className="flex-row gap-2">
             {([{ label: '느리게', value: 0.8 }, { label: '보통', value: 1 }, { label: '빠르게', value: 1.2 }] as const).map((option) => (
-              <Pressable key={option.value} onPress={() => setDraftSpeechRate(option.value)} className={`flex-1 rounded-xl border px-2 py-3 ${draftSpeechRate === option.value ? 'border-[#255F5A] bg-[#E7F2EF]' : 'border-[#E9DDCE] bg-white'}`}>
+              <Pressable key={option.value} onPress={() => previewRate(option.value)} className={`flex-1 rounded-xl border px-2 py-3 ${draftSpeechRate === option.value ? 'border-[#255F5A] bg-[#E7F2EF]' : 'border-[#E9DDCE] bg-white'}`}>
                 <AppText className={`text-center text-xs font-black ${draftSpeechRate === option.value ? 'text-[#255F5A]' : 'text-[#6B5843]'}`}>{option.label}</AppText>
               </Pressable>
             ))}
