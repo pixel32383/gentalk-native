@@ -33,7 +33,17 @@ yarn-error.*
 
 # local env files
 .env
+.env.*
 .env*.local
+!.env.example
+
+# build artifacts and local verification output
+*.apk
+*.aab
+*.ipa
+coverage/
+.firebase/
+firebase-debug.*
 
 # typescript
 *.tsbuildinfo
