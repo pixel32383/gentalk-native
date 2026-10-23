@@ -24,7 +24,7 @@ async function getAuthenticatedApiHeaders() {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
     'X-Firebase-UID': user.uid,
-    // 개발 서버만 이 헤더를 해석합니다. 배포 서버는 무시합니다.
+    // 개발 서버와 별도 허용된 테스트 서버만 이 설정을 적용합니다.
     'X-Gentalk-Dev-Rate-Limit': getDevelopmentAiRateLimitEnabled() ? 'on' : 'off',
   };
 }

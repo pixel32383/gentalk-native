@@ -88,6 +88,7 @@ Google 로그인과 음성 인식은 추가 네이티브 모듈을 사용합니�
 | --- | --- | --- |
 | `development` | 개발 서버와 연결해 기능 확인 | 개발용 APK |
 | `preview` | 제출·내부 테스트 | APK |
+| `preview-unlimited` | AI 횟수 제한을 끌 수 있는 전용 테스트 | APK |
 | `production` | 스토어 배포 준비 | 기본 AAB |
 
 ```bash
@@ -98,7 +99,51 @@ npx eas-cli@latest build -p android --profile production
 
 위 세 명령 중 목적에 맞는 하나만 실행합니다. 현재 EAS 프로젝트로 빌드하려면 해당 Expo 계정·팀 접근 권한이 필요합니다.
 
-Preview APK의 화면 코드는 앱에 포함되지만, AI 단어 생성·회화·피드백은 별도 서버를 호출합니다. 현재 앱은 `/api/...` 상대 경로를 사용하므로 제출 전 공개 API 배포와 앱의 서버 주소 연결을 구성해야 합니다. 서버 키는 배포 환경의 비밀 환경 변수에 등록합니다. GitHub에 코드를 올리는 것만으로 AI API가 배포되지는 않습니다.
+Preview APK의 화면 코드는 앱에 포함되며, AI 단어 생성·회화·피드백·음성 인식 확인은 EAS Hosting의 공개 서버 `https://gentalk-pixel3238.expo.app`을 호출합니다. `app.json`의 `expo-router` 플러그인 `origin`에 서버 주소가 설정되어 있습니다. 개발용 APK에서는 기존처럼 현재 개발 서버를 이용합니다.
+
+### 공개 AI API 배포
+
+EAS 프로젝트의 `production` 환경에 다음 서버 변수를 등록합니다. OpenAI 키에는 `EXPO_PUBLIC_` 접두사를 붙이지 않습니다.
+
+| 변수 | EAS 표시 설정 | 용도 |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Sensitive | 서버에서만 사용하는 OpenAI 키 |
+| `OPENAI_MODEL` | Plain text | AI 모델 (`gpt-4.1-mini`) |
+| `FIREBASE_PROJECT_ID` | Plain text | Firebase 프로젝트 (`gentalk-595d2`) |
+| `AI_RATE_LIMIT_ENABLED` | Plain text | `true`; 배포 서버는 항상 요청 제한 적용 |
+
+EAS Hosting은 `Sensitive` 변수를 지원하며, EAS의 `Secret` 표시 설정은 Hosting에서 지원하지 않습니다. 변수 값은 EAS 대시보드에서 관리하고 Git에 저장하지 않습니다.
+
+서버 코드나 AI 규칙을 수정한 뒤 다음 두 명령으로 배포합니다.
+
+```bash
+npx expo export --platform web --output-dir .expo/hosting
+npx eas-cli@latest deploy --export-dir .expo/hosting --environment production --prod
+```
+
+같은 공개 주소의 서버 코드·환경 변수만 변경할 때는 APK를 다시 만들 필요가 없습니다. 서버 주소 또는 앱 화면 코드를 변경한 경우에는 Preview APK를 다시 빌드합니다. 기존에 서버 주소가 없었던 APK는 새 APK로 업데이트해야 합니다. GitHub에 코드를 올리는 것만으로 AI API가 배포되지는 않습니다.
+
+### AI 한도 해제 테스트 APK
+
+제한을 켠 경우 계정별 하루 한도는 단어 생성 20회, 회화·음성 인식 확인 합계 200회, 피드백 20회, 전체 240회이며, 분당 한도는 8회입니다. 서버의 `ai-rate-limit.ts`와 `firestore.rules`를 같은 수치로 유지해야 합니다. 날짜 한도는 현재 UTC 날짜 기준입니다.
+
+한도를 바꾼 경우 일반 서버와 테스트 서버를 각각 재배포하고 Firestore 규칙도 함께 배포합니다. 서버 주소가 그대로라면 기존 APK에도 새 한도가 적용됩니다.
+
+```bash
+npx firebase-tools@latest deploy --only firestore:rules --project gentalk-595d2
+```
+
+`preview-unlimited` 프로필은 `app.config.js`에서 API 주소를 `https://gentalk-pixel3238--unlimited.expo.app`으로 변경하고, 처음 실행할 때 앱 자체 요청 횟수 제한을 끕니다. 일반 `preview`의 주소와 제한 설정은 유지합니다. 프로필 → 앱 정보 → 왼쪽 위 i 아이콘을 5번 누르면 요청 제한을 다시 켜거나 끌 수 있으며, 테스트 APK의 설정은 별도로 저장됩니다. OpenAI 계정 자체의 사용 한도와 과금은 그대로 적용됩니다.
+
+전용 서버는 EAS `preview` 환경의 서버 변수와 `ALLOW_PREVIEW_RATE_LIMIT_BYPASS=true`를 사용합니다. 이 변수는 일반 서버의 `production` 환경에 설정하지 않습니다. 제한을 끄더라도 Firebase 토큰과 사용자 경로 소유권 검사는 유지합니다.
+
+```bash
+npx expo export --platform web --output-dir .expo/hosting
+npx eas-cli@latest deploy --export-dir .expo/hosting --environment preview --alias unlimited
+npx eas-cli@latest build -p android --profile preview-unlimited --non-interactive --no-wait
+```
+
+빌드는 접수 후 종료하며, 완료 시 EAS 빌드 페이지에서 APK를 다운로드할 수 있습니다.
 
 ## 코드를 수정할 위치
 

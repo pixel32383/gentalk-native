@@ -11,11 +11,11 @@ type DailyUsage = {
 type MinuteUsage = { count: number; updateTime?: string };
 
 const LIMITS: Record<AiRequestKind | 'total' | 'minute', number> = {
-  vocabulary: 10,
-  conversation: 100,
-  feedback: 10,
-  total: 120,
-  minute: 6,
+  vocabulary: 20,
+  conversation: 200,
+  feedback: 20,
+  total: 240,
+  minute: 8,
 };
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID ?? 'gentalk-595d2';
@@ -23,6 +23,7 @@ const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/dat
 
 // 개발 서버에서만 .env의 AI_RATE_LIMIT_ENABLED=false로 한도를 잠시 해제할 수 있습니다.
 // 배포 환경(NODE_ENV=production)에서는 이 값과 관계없이 항상 제한을 적용합니다.
+// 테스트 전용 서버는 아래 ALLOW_PREVIEW_RATE_LIMIT_BYPASS 설정으로 별도 허용합니다.
 function isDevelopmentRateLimitDisabled(request: Request) {
   return process.env.NODE_ENV !== 'production'
     && (process.env.AI_RATE_LIMIT_ENABLED === 'false' || request.headers.get('x-gentalk-dev-rate-limit') === 'off');
@@ -161,6 +162,22 @@ export async function enforceAiRateLimit(request: Request, kind: AiRequestKind):
   if (!identity) return apiJson({ error: '로그인 정보를 확인하지 못했습니다. 다시 로그인해주세요.' }, 401);
 
   try {
+    // 별도 테스트 서버에서만 허용합니다. 일반 배포 서버는 off 헤더를 무시합니다.
+    if (process.env.ALLOW_PREVIEW_RATE_LIMIT_BYPASS === 'true'
+      && request.headers.get('x-gentalk-dev-rate-limit') === 'off') {
+      // 카운터를 건너뛰더라도 Firebase 토큰과 UID의 소유권은 확인해야 합니다.
+      // 프로필이 없는 게스트도 본인 경로의 404 응답이면 인증된 사용자입니다.
+      const profile = await fetch(`${BASE_URL}/users/${encodeURIComponent(identity.userId)}`, {
+        headers: { Authorization: `Bearer ${identity.token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (profile.ok || profile.status === 404) return null;
+      if (profile.status === 401 || profile.status === 403) {
+        return apiJson({ error: '로그인 정보를 확인하지 못했습니다. 다시 로그인해주세요.' }, 401);
+      }
+      throw new Error('QUOTA_STORAGE_UNAVAILABLE');
+    }
+
     const withinDailyLimit = await reserveDaily(identity.userId, identity.token, kind);
     if (!withinDailyLimit) return apiJson({ error: '오늘의 AI 학습 요청 한도에 도달했습니다. 내일 다시 이용해주세요.' }, 429);
 

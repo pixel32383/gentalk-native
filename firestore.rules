@@ -50,10 +50,10 @@ service cloud.firestore {
             && after.kind == 'daily'
             && after.userId == userId
             && after.date == before.date
-            && after.total == before.total + 1 && after.total <= 120
-            && after.vocabulary >= before.vocabulary && after.vocabulary <= before.vocabulary + 1 && after.vocabulary <= 10
-            && after.conversation >= before.conversation && after.conversation <= before.conversation + 1 && after.conversation <= 100
-            && after.feedback >= before.feedback && after.feedback <= before.feedback + 1 && after.feedback <= 10
+            && after.total == before.total + 1 && after.total <= 240
+            && after.vocabulary >= before.vocabulary && after.vocabulary <= before.vocabulary + 1 && after.vocabulary <= 20
+            && after.conversation >= before.conversation && after.conversation <= before.conversation + 1 && after.conversation <= 200
+            && after.feedback >= before.feedback && after.feedback <= before.feedback + 1 && after.feedback <= 20
             && after.vocabulary + after.conversation + after.feedback == after.total;
         }
 
@@ -72,7 +72,7 @@ service cloud.firestore {
             && after.kind == 'minute'
             && after.userId == userId
             && after.minute == before.minute
-            && after.count == before.count + 1 && after.count <= 6;
+            && after.count == before.count + 1 && after.count <= 8;
         }
 
         // Deletion is intentionally denied: otherwise a user could erase the
